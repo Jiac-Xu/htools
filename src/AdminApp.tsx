@@ -1,10 +1,10 @@
-import { ArrowDownUp, ArrowRightLeft, ArrowUp, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, Eraser, FileText, Github, Languages, LogOut, PanelLeft, Plug, Plus, RefreshCw, Rss, Search, Send, Settings, ShieldCheck, Star, SquarePen, Sun, Tags, Trash2, Upload, Wand2, Wrench, X } from "lucide-react";
+import { ArrowDownUp, ArrowRightLeft, ArrowUp, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, Eraser, FileText, Github, Languages, LogOut, PanelLeft, Plus, RefreshCw, Rss, Search, Send, Settings, ShieldCheck, Star, SquarePen, Sun, Tags, Trash2, Upload, Wand2, Wrench, X } from "lucide-react";
 import { ChangeEvent, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { applyAdminCategoryAction, checkLinks, createArticle, createContentSource, createTool, deleteArticle, deleteContentSource, deleteTool, exportBackupData, exportToolSourceData, importTools, loadAdminArticle, loadAdminArticles, loadAdminAuthConfig, loadAdminCategorySettings, loadAdminSecuritySettings, loadAdminTools, loadContentItems, loadContentSources, loadGitHubSettings, loadGitHubToolMetadata, loadProxySettings, loadSiteConfiguration, loadSiteSettings, loadSourceSettings, loadTelegramMessage, loadTelegramSettings, loadTurnstileSettings, loadUmamiSettings, login, patchSiteSettings, recoverTelegramMessage, resetFactorySettings, restoreBackupData, saveAdminCategorySettings, saveGitHubSettings, saveProxySettings, saveSourceSettings, saveTelegramMessage, saveTelegramSettings, saveTurnstileSettings, saveUmamiSettings, sendTelegramMessage, syncContentSource, testTelegramSettings, updateArticle, updateArticlePublished, updateAdminPassword, updateContentSource, convertContentItemToArticle, previewContentSource, updateTelegramMessage, updateTool, type AdminAuthConfig } from "./admin-api";
+import { applyAdminCategoryAction, checkLinks, createArticle, createContentSource, createTool, deleteArticle, deleteContentSource, deleteTelegramPush, deleteTool, exportBackupData, exportToolSourceData, importTools, loadAdminArticle, loadAdminArticles, loadAdminAuthConfig, loadAdminCategorySettings, loadAdminSecuritySettings, loadAdminTools, loadContentItems, loadContentSources, loadGitHubSettings, loadGitHubToolMetadata, loadProxySettings, loadSiteConfiguration, loadSiteSettings, loadSourceSettings, loadTelegramMessage, loadTelegramPushRecords, loadTelegramSettings, loadTurnstileSettings, loadUmamiSettings, login, patchSiteSettings, recoverTelegramMessage, resetFactorySettings, restoreBackupData, saveAdminCategorySettings, saveGitHubSettings, saveProxySettings, saveSourceSettings, saveTelegramMessage, saveTelegramSettings, saveTurnstileSettings, saveUmamiSettings, sendTelegramMessage, syncContentSource, testTelegramSettings, updateArticle, updateArticlePublished, updateAdminPassword, updateContentSource, convertContentItemToArticle, previewContentSource, updateTelegramMessage, updateTool, type AdminAuthConfig } from "./admin-api";
 import { localeOptions, translations, type Locale, type Messages } from "./i18n";
 import { normalizeProxyBaseUrl, normalizeProxyMode, normalizeProxyScope, proxifyUrl } from "./proxy";
-import type { AdminCategoryAction, AdminCategoryScope, AdminCategorySettings, AdminSecuritySettings, Article, ArticleInput, ArticleSummary, ContentItemSummary, ContentSource, ContentSourceInput, FeedPreview, FooterSettings, GitHubSettings, GitHubSettingsInput, GitHubToolMetadata, HomeHeroContent, LinkCheckResult, ProxySettings, HtoolsBackup, SiteSettings, SourceSettings, TelegramConnection, TelegramMessage, TelegramSettings, TurnstileSettings, Tool, ToolImportMode, ToolInput, UmamiSettings } from "./types";
+import type { AdminCategoryAction, AdminCategoryScope, AdminCategorySettings, AdminSecuritySettings, Article, ArticleInput, ArticleSummary, ContentItemSummary, ContentSource, ContentSourceInput, FeedPreview, FooterSettings, GitHubSettings, GitHubSettingsInput, GitHubToolMetadata, HomeHeroContent, LinkCheckResult, ProxySettings, HtoolsBackup, SiteSettings, SourceSettings, TelegramConnection, TelegramMessage, TelegramPushRecord, TelegramResourceType, TelegramSettings, TurnstileSettings, Tool, ToolImportMode, ToolInput, UmamiSettings } from "./types";
 import { DEFAULT_FOOTER_SETTINGS, DEFAULT_HOME_HERO_SETTINGS, DEFAULT_SITE_SETTINGS, formatFooterJson, getEditableSiteSettings, getFooterFormValues, getHomeHeroSettings, getLocalizedErrorMessage, getSiteDisplayName, getSiteFooterSettings, getSourceErrorMessage, readSiteIconFile } from "./site-helpers";
 import {
   cleanArticleDisplayText,
@@ -146,7 +146,9 @@ function formatAdminDocumentTitle(
 }
 
 type AdminSortMode = "latest" | "name";
+type TelegramPushTypeFilter = "all" | TelegramResourceType;
 type AdminWriteEntityScope = "tool" | "article" | "content-source" | "content-item";
+const TELEGRAM_PUSH_PAGE_SIZE = 30;
 type TelegramMessageErrorCode =
   | "TELEGRAM_MESSAGE_NOT_FOUND"
   | "TELEGRAM_PERMISSION_DENIED"
@@ -362,6 +364,44 @@ function PublishModeField({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function TelegramPushTypeFilter({
+  onChange,
+  text,
+  value
+}: {
+  onChange: (value: TelegramPushTypeFilter) => void;
+  text: ReturnType<typeof getTelegramText>["management"];
+  value: TelegramPushTypeFilter;
+}) {
+  const options: Array<{ label: string; value: TelegramPushTypeFilter }> = [
+    { label: text.filterAll, value: "all" },
+    { label: text.filterTools, value: "tool" },
+    { label: text.filterArticles, value: "article" }
+  ];
+
+  return (
+    <div
+      aria-label={text.title}
+      className="admin-segmented-toggle telegram-push-type-filter"
+      role="group"
+    >
+      {options.map((option) => (
+        <button
+          aria-pressed={value === option.value}
+          className={`admin-segmented-toggle-option ${
+            value === option.value ? "is-active" : ""
+          }`}
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -602,6 +642,22 @@ export default function AdminApp({
   );
   const [telegramSettingsLoadError, setTelegramSettingsLoadError] =
     useState<unknown>(null);
+  const [telegramPushRecords, setTelegramPushRecords] = useState<TelegramPushRecord[]>([]);
+  const [telegramPushType, setTelegramPushType] =
+    useState<TelegramPushTypeFilter>("all");
+  const [telegramPushSearch, setTelegramPushSearch] = useState("");
+  const [debouncedTelegramPushSearch, setDebouncedTelegramPushSearch] = useState("");
+  const [telegramPushTotal, setTelegramPushTotal] = useState(0);
+  const [telegramPushHasMore, setTelegramPushHasMore] = useState(false);
+  const [isLoadingTelegramPushes, setIsLoadingTelegramPushes] = useState(false);
+  const [isLoadingMoreTelegramPushes, setIsLoadingMoreTelegramPushes] = useState(false);
+  const [hasLoadedTelegramPushes, setHasLoadedTelegramPushes] = useState(false);
+  const [telegramPushLoadError, setTelegramPushLoadError] = useState<string | null>(null);
+  const [viewingTelegramPush, setViewingTelegramPush] =
+    useState<TelegramPushRecord | null>(null);
+  const [pendingDeleteTelegramPush, setPendingDeleteTelegramPush] =
+    useState<TelegramPushRecord | null>(null);
+  const [isDeletingTelegramPush, setIsDeletingTelegramPush] = useState(false);
   const [telegramResource, setTelegramResource] = useState<TelegramPushResource | null>(null);
   const [telegramMessage, setTelegramMessage] = useState<TelegramMessage | null>(null);
   const [telegramBodyMarkdown, setTelegramBodyMarkdown] = useState("");
@@ -765,6 +821,9 @@ export default function AdminApp({
   const mutationRefreshGenerationRef = useRef(0);
   const telegramSettingsLoadRequestRef = useRef(0);
   const telegramSettingsLoadAbortRef = useRef<AbortController | null>(null);
+  const telegramPushRequestGenerationRef = useRef(0);
+  const telegramPushNextCursorRef = useRef<string | null>(null);
+  const telegramPushLoadingCursorRef = useRef<string | null>(null);
   const sidebarAnimationTimer = useRef<number | null>(null);
   const adminStatusTimer = useRef<number | null>(null);
   const adminStatusSequence = useRef(0);
@@ -929,6 +988,8 @@ export default function AdminApp({
       ? articleText.adminNav
       : adminView === "content"
         ? contentText.nav
+        : adminView === "push"
+          ? telegramText.management.nav
         : adminView === "import-export"
           ? maintenanceText.importExportTab
           : adminView === "link-check"
@@ -955,6 +1016,9 @@ export default function AdminApp({
   );
   const showAdminContentSkeletons = useLoadingSkeleton(
     isLoadingContent && !hasLoadedContent
+  );
+  const showTelegramPushSkeletons = useLoadingSkeleton(
+    isLoadingTelegramPushes && !hasLoadedTelegramPushes
   );
   const canFillGitHubMetadata = isGitHubRepoUrl(form.url);
   const githubMetadataDetailText = getGitHubMetadataDetailText(locale);
@@ -2052,6 +2116,100 @@ export default function AdminApp({
     }
   }
 
+  function getTelegramPushRequestParams(cursor?: string) {
+    return {
+      cursor,
+      limit: TELEGRAM_PUSH_PAGE_SIZE,
+      query: debouncedTelegramPushSearch.trim() || undefined,
+      resourceType: telegramPushType === "all" ? undefined : telegramPushType
+    };
+  }
+
+  async function refreshTelegramPushRecords() {
+    const generation = telegramPushRequestGenerationRef.current + 1;
+    telegramPushRequestGenerationRef.current = generation;
+    telegramPushNextCursorRef.current = null;
+    telegramPushLoadingCursorRef.current = null;
+    setIsLoadingTelegramPushes(true);
+    setIsLoadingMoreTelegramPushes(false);
+    setTelegramPushHasMore(false);
+    setTelegramPushLoadError(null);
+    if (telegramPushRecords.length === 0) setHasLoadedTelegramPushes(false);
+
+    try {
+      const page = await loadTelegramPushRecords(
+        token,
+        getTelegramPushRequestParams()
+      );
+      if (telegramPushRequestGenerationRef.current !== generation) return;
+      setTelegramPushRecords(page.records);
+      setTelegramPushTotal(page.total);
+      setTelegramPushHasMore(page.hasMore);
+      telegramPushNextCursorRef.current = page.nextCursor;
+    } catch (error) {
+      if (telegramPushRequestGenerationRef.current === generation) {
+        const message = getLocalizedErrorMessage(error, t);
+        setTelegramPushLoadError(message);
+        setStatus(message);
+      }
+    } finally {
+      if (telegramPushRequestGenerationRef.current === generation) {
+        setHasLoadedTelegramPushes(true);
+        setIsLoadingTelegramPushes(false);
+      }
+    }
+  }
+
+  async function loadMoreTelegramPushRecords() {
+    const cursor = telegramPushNextCursorRef.current;
+    if (
+      telegramPushLoadingCursorRef.current ||
+      !telegramPushHasMore ||
+      !cursor
+    ) {
+      return;
+    }
+
+    const generation = telegramPushRequestGenerationRef.current;
+    telegramPushLoadingCursorRef.current = cursor;
+    setIsLoadingMoreTelegramPushes(true);
+    try {
+      const page = await loadTelegramPushRecords(
+        token,
+        getTelegramPushRequestParams(cursor)
+      );
+      if (
+        telegramPushRequestGenerationRef.current !== generation ||
+        telegramPushLoadingCursorRef.current !== cursor
+      ) {
+        return;
+      }
+      setTelegramPushRecords((current) => {
+        const recordsById = new Map(current.map((record) => [record.id, record]));
+        page.records.forEach((record) => recordsById.set(record.id, record));
+        return Array.from(recordsById.values());
+      });
+      setTelegramPushTotal(page.total);
+      setTelegramPushHasMore(page.hasMore);
+      telegramPushNextCursorRef.current = page.nextCursor;
+    } catch (error) {
+      if (
+        telegramPushRequestGenerationRef.current === generation &&
+        telegramPushLoadingCursorRef.current === cursor
+      ) {
+        setStatus(getLocalizedErrorMessage(error, t));
+      }
+    } finally {
+      if (
+        telegramPushRequestGenerationRef.current === generation &&
+        telegramPushLoadingCursorRef.current === cursor
+      ) {
+        telegramPushLoadingCursorRef.current = null;
+        setIsLoadingMoreTelegramPushes(false);
+      }
+    }
+  }
+
   async function refreshAfterMutation(refreshAction: () => Promise<void>) {
     const generation = mutationRefreshGenerationRef.current + 1;
     mutationRefreshGenerationRef.current = generation;
@@ -2164,6 +2322,18 @@ export default function AdminApp({
       setTelegramSettings({ available: false, enabled: false, footerMarkdown: "" });
       setTelegramSettingsLoading(false);
       setTelegramSettingsLoadError(null);
+      telegramPushRequestGenerationRef.current += 1;
+      telegramPushNextCursorRef.current = null;
+      telegramPushLoadingCursorRef.current = null;
+      setTelegramPushRecords([]);
+      setTelegramPushTotal(0);
+      setTelegramPushHasMore(false);
+      setIsLoadingTelegramPushes(false);
+      setIsLoadingMoreTelegramPushes(false);
+      setHasLoadedTelegramPushes(false);
+      setTelegramPushLoadError(null);
+      setViewingTelegramPush(null);
+      setPendingDeleteTelegramPush(null);
       setTelegramResource(null);
       setTelegramMessage(null);
       return;
@@ -2240,6 +2410,19 @@ export default function AdminApp({
     debouncedContentSearch,
     contentSortMode
   ]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedTelegramPushSearch(telegramPushSearch.trim());
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [telegramPushSearch]);
+
+  useEffect(() => {
+    if (!token || adminView !== "push") return;
+    void refreshTelegramPushRecords();
+  }, [token, adminView, telegramPushType, debouncedTelegramPushSearch]);
 
   useLayoutEffect(() => {
     document.documentElement.classList.add("admin-route");
@@ -2595,6 +2778,7 @@ export default function AdminApp({
         message.targetChanged ? "TELEGRAM_TARGET_CHANGED" : ""
       );
       setStatus(telegramText.saved);
+      if (adminView === "push") void refreshTelegramPushRecords();
     } catch (error) {
       setStatus(getLocalizedErrorMessage(error, t));
     } finally {
@@ -2647,6 +2831,7 @@ export default function AdminApp({
       setStatus(
         telegramMessage.exists ? telegramText.updated : telegramText.sent
       );
+      if (adminView === "push") void refreshTelegramPushRecords();
       setTelegramResource(null);
       setTelegramMessage(null);
       setTelegramBodyMarkdown("");
@@ -2701,6 +2886,7 @@ export default function AdminApp({
       setTelegramMediaUrl(message.mediaUrl);
       setTelegramMessageErrorCode("");
       setStatus(telegramText.recovered);
+      if (adminView === "push") void refreshTelegramPushRecords();
     } catch (error) {
       const errorCode = getTelegramMessageErrorCode(error);
       setTelegramMessageErrorCode(errorCode);
@@ -3108,6 +3294,30 @@ export default function AdminApp({
     }
   }
 
+  async function handleDeleteTelegramPush(record: TelegramPushRecord) {
+    if (isDeletingTelegramPush || !telegramSettings.enabled) return false;
+    setIsDeletingTelegramPush(true);
+    setStatus("");
+
+    try {
+      await deleteTelegramPush(record.resourceType, record.resourceId, record.id, token);
+      setPendingDeleteTelegramPush(null);
+      setViewingTelegramPush((current) => current?.id === record.id ? null : current);
+      setStatus(telegramText.management.deleted);
+      await refreshAfterMutation(refreshTelegramPushRecords);
+      return true;
+    } catch (error) {
+      setStatus(
+        getTelegramMessageErrorCode(error) === "TELEGRAM_PERMISSION_DENIED"
+          ? telegramText.management.deletePermissionDenied
+          : getLocalizedErrorMessage(error, t, t.status.deleteFailed)
+      );
+      return false;
+    } finally {
+      setIsDeletingTelegramPush(false);
+    }
+  }
+
   function openConvertContentItem(item: ContentItemSummary) {
     if (isWriteEntityLocked("content-item", item.id)) {
       return;
@@ -3448,6 +3658,14 @@ export default function AdminApp({
             <Rss size={18} />
             <span>{contentText.nav}</span>
           </button>
+          <button
+            className={adminView === "push" ? "is-active" : ""}
+            type="button"
+            onClick={() => selectAdminView("push")}
+          >
+            <Send size={18} />
+            <span>{telegramText.management.nav}</span>
+          </button>
 
           <span className="admin-sidebar-section">{t.admin.settings}</span>
           <button
@@ -3772,6 +3990,29 @@ export default function AdminApp({
                 />}
               />
             ) : null}
+            {adminView === "push" ? (
+              <AdminFilterBar
+                categoryControl={
+                  <TelegramPushTypeFilter
+                    onChange={setTelegramPushType}
+                    text={telegramText.management}
+                    value={telegramPushType}
+                  />
+                }
+                clearLabel={t.actions.clearFilters}
+                hasActiveFilter={
+                  telegramPushType !== "all" || Boolean(telegramPushSearch.trim())
+                }
+                onClear={() => {
+                  setTelegramPushType("all");
+                  setTelegramPushSearch("");
+                  setDebouncedTelegramPushSearch("");
+                }}
+                onSearchChange={setTelegramPushSearch}
+                searchPlaceholder={telegramText.management.searchPlaceholder}
+                searchValue={telegramPushSearch}
+              />
+            ) : null}
           </div>
         </header>
 
@@ -4019,6 +4260,33 @@ export default function AdminApp({
             />
           ) : null}
 
+          {adminView === "push" ? (
+            <AdminTelegramPushPanel
+              hasActiveFilter={
+                telegramPushType !== "all" || Boolean(debouncedTelegramPushSearch)
+              }
+              hasMore={telegramPushHasMore}
+              isLoading={isLoadingTelegramPushes}
+              isLoadingMore={isLoadingMoreTelegramPushes}
+              loadError={telegramPushLoadError}
+              onDelete={setPendingDeleteTelegramPush}
+              onEdit={(record) => {
+                if (record.resource) {
+                  void openTelegramMessageDialog(record.resource);
+                }
+              }}
+              onLoadMore={() => void loadMoreTelegramPushRecords()}
+              onRetry={() => void refreshTelegramPushRecords()}
+              onView={setViewingTelegramPush}
+              records={telegramPushRecords}
+              serviceEnabled={telegramSettings.enabled}
+              showSkeletons={showTelegramPushSkeletons}
+              t={t}
+              text={telegramText.management}
+              total={telegramPushTotal}
+            />
+          ) : null}
+
           {adminView === "import-export" || adminView === "link-check" ? (
             <AdminLinkCheckPanel
               isLoadingTools={isLoadingTools && !hasLoadedTools}
@@ -4255,6 +4523,47 @@ export default function AdminApp({
               ) : null}
             </div>
           )}
+        </Dialog>
+      ) : null}
+
+      {viewingTelegramPush ? (
+        <Dialog
+          closeLabel={t.actions.close}
+          onClose={() => setViewingTelegramPush(null)}
+          panelClassName="tool-editor-dialog telegram-message-dialog telegram-push-preview-dialog"
+          title={telegramText.management.previewTitle}
+        >
+          <div className="telegram-push-preview-dialog-body">
+            <div className="telegram-push-preview-heading">
+              <strong>{viewingTelegramPush.title}</strong>
+              {!viewingTelegramPush.resourceExists ? (
+                <span className="source-card-status">
+                  {telegramText.management.resourceDeleted}
+                </span>
+              ) : null}
+            </div>
+            <section className="tool-github-detail-card telegram-message-preview">
+              <TelegramMessagePreview
+                content={viewingTelegramPush.messageMarkdown}
+                mediaEnabled={viewingTelegramPush.mediaEnabled}
+                mediaUrl={viewingTelegramPush.mediaUrl}
+                locale={locale}
+                proxySettings={proxySettings}
+                resource={
+                  viewingTelegramPush.resource ?? {
+                    type: viewingTelegramPush.resourceType,
+                    id: viewingTelegramPush.resourceId,
+                    title: viewingTelegramPush.title,
+                    description: "",
+                    url: "",
+                    demoUrl: "",
+                    image: viewingTelegramPush.mediaUrl,
+                    tags: []
+                  }
+                }
+              />
+            </section>
+          </div>
         </Dialog>
       ) : null}
 
@@ -5065,6 +5374,22 @@ export default function AdminApp({
         />
       ) : null}
 
+      {pendingDeleteTelegramPush ? (
+        <AdminConfirmDialog
+          cancelLabel={t.status.deleteCancel}
+          closeLabel={t.actions.close}
+          confirmLabel={t.actions.confirm}
+          descriptionId="delete-telegram-push-dialog-description"
+          description={telegramText.management.deleteDescription}
+          disabled={isDeletingTelegramPush}
+          onCancel={() => {
+            if (!isDeletingTelegramPush) setPendingDeleteTelegramPush(null);
+          }}
+          onConfirm={() => void handleDeleteTelegramPush(pendingDeleteTelegramPush)}
+          title={telegramText.management.deleteTitle}
+        />
+      ) : null}
+
       {pendingDeleteArticle ? (
         <AdminConfirmDialog
           cancelLabel={t.status.deleteCancel}
@@ -5103,6 +5428,252 @@ export default function AdminApp({
         />
       ) : null}
     </div>
+  );
+}
+
+function AdminTelegramPushPanel({
+  hasActiveFilter,
+  hasMore,
+  isLoading,
+  isLoadingMore,
+  loadError,
+  onDelete,
+  onEdit,
+  onLoadMore,
+  onRetry,
+  onView,
+  records,
+  serviceEnabled,
+  showSkeletons,
+  t,
+  text,
+  total
+}: {
+  hasActiveFilter: boolean;
+  hasMore: boolean;
+  isLoading: boolean;
+  isLoadingMore: boolean;
+  loadError: string | null;
+  onDelete: (record: TelegramPushRecord) => void;
+  onEdit: (record: TelegramPushRecord) => void;
+  onLoadMore: () => void;
+  onRetry: () => void;
+  onView: (record: TelegramPushRecord) => void;
+  records: TelegramPushRecord[];
+  serviceEnabled: boolean;
+  showSkeletons: boolean;
+  t: Messages;
+  text: ReturnType<typeof getTelegramText>["management"];
+  total: number;
+}) {
+  return (
+    <section className="telegram-push-management" aria-label={text.title}>
+      <header className="telegram-push-management-heading">
+        <div>
+          <h2>{text.title}</h2>
+          <p>{text.description}</p>
+        </div>
+        {total > 0 ? <span className="source-card-status">{total}</span> : null}
+      </header>
+      {!serviceEnabled ? (
+        <p className="telegram-push-service-note">{text.serviceDisabled}</p>
+      ) : null}
+
+      {isLoading && records.length === 0 ? (
+        <SkeletonVisibility visible={showSkeletons}>
+          <div className="telegram-push-list" aria-hidden="true">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <TelegramPushRecordSkeleton key={index} />
+            ))}
+          </div>
+        </SkeletonVisibility>
+      ) : loadError && records.length === 0 ? (
+        <AdminInitialLoadError message={loadError} onRetry={onRetry} t={t} />
+      ) : records.length ? (
+        <>
+          <div className="telegram-push-list">
+            {records.map((record) => (
+              <TelegramPushRecordCard
+                key={record.id}
+                onDelete={() => onDelete(record)}
+                onEdit={() => onEdit(record)}
+                onView={() => onView(record)}
+                record={record}
+                serviceEnabled={serviceEnabled}
+                text={text}
+              />
+            ))}
+          </div>
+          {hasMore ? (
+            <div className="content-flow-load-more">
+              <button
+                className="ghost-button"
+                disabled={isLoadingMore}
+                type="button"
+                onClick={onLoadMore}
+              >
+                {text.loadMore}
+              </button>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <section className="admin-empty-state telegram-push-empty-state">
+          <div className="empty-state-title">
+            {hasActiveFilter ? <Search size={28} /> : <Send size={28} />}
+            <h2>{hasActiveFilter ? text.noMatchTitle : text.emptyTitle}</h2>
+          </div>
+          <p>{hasActiveFilter ? text.noMatchDescription : text.emptyDescription}</p>
+        </section>
+      )}
+    </section>
+  );
+}
+
+function TelegramPushRecordCard({
+  onDelete,
+  onEdit,
+  onView,
+  record,
+  serviceEnabled,
+  text
+}: {
+  onDelete: () => void;
+  onEdit: () => void;
+  onView: () => void;
+  record: TelegramPushRecord;
+  serviceEnabled: boolean;
+  text: ReturnType<typeof getTelegramText>["management"];
+}) {
+  const actions = useAdminCardActionMenu(`telegram-push:${record.id}`);
+  const displayDate = formatAdminDate(record.sentAt || record.updatedAt);
+  const description = cleanArticleDisplayText(record.messageMarkdown);
+
+  return (
+    <article className="telegram-push-record-card">
+      <div className="telegram-push-record-head">
+        <span className="telegram-push-record-icon" aria-hidden="true">
+          <Send size={18} />
+        </span>
+        <div className="telegram-push-record-title">
+          <h2>{record.title}</h2>
+          <div className="telegram-push-record-meta">
+            <span>
+              {record.resourceType === "tool" ? text.typeTool : text.typeArticle}
+            </span>
+            <span>
+              {record.syncStatus === "synced"
+                ? text.statusSynced
+                : text.statusPending}
+            </span>
+            <span>{record.mediaEnabled ? text.imageEnabled : text.imageDisabled}</span>
+            {displayDate ? <span>{displayDate}</span> : null}
+          </div>
+        </div>
+        <div className="admin-tool-card-actions" ref={actions.rootRef}>
+          <button
+            aria-expanded={actions.open}
+            aria-haspopup="menu"
+            aria-label={`${record.title} actions`}
+            className={`icon-button admin-tool-menu-trigger ${
+              actions.open ? "is-active" : ""
+            }`}
+            ref={actions.triggerRef}
+            type="button"
+            onClick={() => actions.setOpen((current) => !current)}
+            onKeyDown={actions.handleTriggerKeyDown}
+            onPointerCancel={releaseTouchButtonFocus}
+            onPointerDown={startTouchButtonPress}
+            onPointerUp={releaseTouchButtonFocus}
+          >
+            <ChevronDown size={17} />
+          </button>
+          {actions.open ? (
+            <div
+              className="admin-tool-action-menu"
+              onKeyDown={actions.handleMenuKeyDown}
+              role="menu"
+            >
+              <button
+                role="menuitem"
+                type="button"
+                onClick={() => {
+                  actions.close();
+                  onView();
+                }}
+              >
+                <FileText size={17} />
+                <span className="admin-action-label-full">{text.viewAction}</span>
+                <span className="admin-action-label-short">{text.viewActionShort}</span>
+              </button>
+              {record.resourceExists ? (
+                <button
+                  disabled={!serviceEnabled}
+                  role="menuitem"
+                  type="button"
+                  onClick={() => {
+                    actions.close();
+                    onEdit();
+                  }}
+                >
+                  <SquarePen size={17} />
+                  <span className="admin-action-label-full">{text.editAction}</span>
+                  <span className="admin-action-label-short">{text.editActionShort}</span>
+                </button>
+              ) : null}
+              <button
+                className="danger"
+                disabled={!serviceEnabled}
+                role="menuitem"
+                type="button"
+                onClick={() => {
+                  actions.close();
+                  onDelete();
+                }}
+              >
+                <Trash2 size={16} />
+                <span className="admin-action-label-full">{text.deleteAction}</span>
+                <span className="admin-action-label-short">{text.deleteActionShort}</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      {!record.resourceExists ? (
+        <span className="source-card-status telegram-push-resource-status">
+          {text.resourceDeleted}
+        </span>
+      ) : null}
+      <p className="telegram-push-record-description">{description}</p>
+    </article>
+  );
+}
+
+function TelegramPushRecordSkeleton() {
+  return (
+    <article
+      aria-hidden="true"
+      className="telegram-push-record-card skeleton-layout-mask"
+    >
+      <div className="telegram-push-record-head">
+        <span className="telegram-push-record-icon"><Send size={18} /></span>
+        <div className="telegram-push-record-title">
+          <h2>Telegram push title</h2>
+          <div className="telegram-push-record-meta">
+            <span>Resource</span>
+            <span>Synced</span>
+            <span>With image</span>
+            <span>2026-07-26</span>
+          </div>
+        </div>
+        <button className="icon-button" disabled type="button">
+          <ChevronDown size={17} />
+        </button>
+      </div>
+      <p className="telegram-push-record-description">
+        Telegram message content preview follows the final record structure.
+      </p>
+    </article>
   );
 }
 
@@ -9315,29 +9886,25 @@ function AdminSystemSettingsPanel({
 
   const settingsGroups: Array<{
     id: AdminSystemSettingsGroup;
-    Icon: typeof Settings;
     label: string;
   }> = [
     {
       id: "site",
-      Icon: Settings,
       label: maintenanceText.systemGroupGeneral
     },
     {
       id: "services",
-      Icon: Plug,
       label: maintenanceText.systemGroupIntegrations
     },
     {
       id: "management",
-      Icon: ShieldCheck,
       label: maintenanceText.systemGroupSecurity
     }
   ];
 
   const settingsTabs = (
     <div
-      className="system-settings-tabs"
+      className="admin-segmented-toggle system-settings-tabs"
       role="tablist"
       aria-label={maintenanceText.systemTitle}
     >
@@ -9348,7 +9915,7 @@ function AdminSystemSettingsPanel({
           <button
             aria-controls={`system-settings-panel-${group.id}`}
             aria-selected={selected}
-            className={`ghost-button system-settings-tab ${
+            className={`admin-segmented-toggle-option system-settings-tab ${
               selected ? "is-active" : ""
             }`}
             id={`system-settings-tab-${group.id}`}
@@ -9366,7 +9933,6 @@ function AdminSystemSettingsPanel({
             tabIndex={selected ? 0 : -1}
             type="button"
           >
-            <group.Icon size={16} />
             {group.label}
           </button>
         );

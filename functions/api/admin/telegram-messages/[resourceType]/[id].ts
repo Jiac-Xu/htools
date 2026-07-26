@@ -1,4 +1,5 @@
 import {
+  deleteTelegramPush,
   getTelegramMessageState,
   readTelegramResourceType,
   saveTelegramMessage,
@@ -106,5 +107,25 @@ export const onRequestPatch: PagesFunction<Env> = async ({ request, env, params 
     });
   } catch (error) {
     return writeTelegramErrorResponse(error, "Unable to save Telegram message.");
+  }
+};
+
+export const onRequestDelete: PagesFunction<Env> = async ({ request, env, params }) => {
+  const unauthorized = await requireAdmin(request, env);
+  if (unauthorized) return unauthorized;
+
+  try {
+    const context = readRequestContext(request, params);
+    const recordId = new URL(request.url).searchParams.get("recordId") ?? undefined;
+    return json({
+      result: await deleteTelegramPush(
+        env,
+        context.resourceType,
+        context.resourceId,
+        recordId
+      )
+    });
+  } catch (error) {
+    return writeTelegramErrorResponse(error, "Unable to delete Telegram message.");
   }
 };

@@ -36,6 +36,7 @@ export type AdminView =
   | "tools"
   | "articles"
   | "content"
+  | "push"
   | "import-export"
   | "link-check"
   | "system";
@@ -110,6 +111,7 @@ const adminViewPaths: Record<AdminView, string> = {
   tools: "tools",
   articles: "articles",
   content: "content",
+  push: "push",
   "import-export": "import-export",
   "link-check": "check",
   system: "settings/site"

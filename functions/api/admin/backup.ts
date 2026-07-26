@@ -427,18 +427,6 @@ function validateBackupIntegrity(data: BackupData) {
   const sourceIds = new Set(data.contentSources.map((row) => row.id));
   const contentItemsById = new Map(data.contentItems.map((row) => [row.id, row]));
   const articlesById = new Map(data.articles.map((row) => [row.id, row]));
-  const toolIds = new Set(data.tools.map((row) => row.id));
-  const articleIds = new Set(data.articles.map((row) => row.id));
-
-  for (const message of data.telegramMessages) {
-    const resourceExists = message.resource_type === "tool"
-      ? toolIds.has(message.resource_id)
-      : articleIds.has(message.resource_id);
-    if (!resourceExists) {
-      throw new Error(`Telegram message ${message.id} references a missing resource.`);
-    }
-  }
-
   for (const item of data.contentItems) {
     if (!sourceIds.has(item.source_id)) {
       throw new Error(`content item ${item.id} references a missing content source.`);

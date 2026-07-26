@@ -1,6 +1,5 @@
 import {
   getDatabase,
-  ensureTelegramMessageSchema,
   invalidatePublicApiCache,
   json,
   jsonDeleted,
@@ -74,15 +73,10 @@ export const onRequestDelete: PagesFunction<Env> = async ({
 
   const id = String(params.id ?? "");
   const db = await getDatabase(env);
-  await ensureTelegramMessageSchema(db);
   const result = await db.prepare("DELETE FROM tools WHERE id = ?").bind(id).run();
   if (!result.meta.changes) {
     return jsonError("Tool not found.", "NOT_FOUND", { status: 404 });
   }
-  await db.prepare(
-    "DELETE FROM telegram_messages WHERE resource_type = 'tool' AND resource_id = ?"
-  ).bind(id)
-    .run();
   await invalidatePublicApiCache(env);
   return jsonDeleted("tool", id);
 };

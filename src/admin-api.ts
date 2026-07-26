@@ -29,6 +29,8 @@ import type {
   SourceSettings,
   TurnstileSettings,
   TelegramConnection,
+  TelegramPushPage,
+  TelegramResourceType,
   TelegramSettings,
   TelegramMessage,
   UmamiSettings,
@@ -142,6 +144,14 @@ type TelegramConnectionResponse = {
 
 type TelegramMessageResponse = {
   message: TelegramMessage;
+};
+
+type TelegramDeleteResponse = {
+  result: {
+    deleted: true;
+    id: string;
+    messageMissing: boolean;
+  };
 };
 
 type AdminCategorySettingsResponse = {
@@ -831,6 +841,43 @@ export async function loadTelegramMessage(
     { headers: { Accept: "application/json", Authorization: `Bearer ${token}` } }
   );
   return (await readJson<TelegramMessageResponse>(response)).message;
+}
+
+export async function loadTelegramPushRecords(
+  token: string,
+  params: {
+    cursor?: string;
+    limit?: number;
+    query?: string;
+    resourceType?: TelegramResourceType;
+  } = {}
+): Promise<TelegramPushPage> {
+  const searchParams = new URLSearchParams();
+  if (params.cursor) searchParams.set("cursor", params.cursor);
+  if (params.limit) searchParams.set("limit", String(params.limit));
+  if (params.query) searchParams.set("q", params.query);
+  if (params.resourceType) searchParams.set("type", params.resourceType);
+  const suffix = searchParams.size ? `?${searchParams.toString()}` : "";
+  const response = await fetch(`/api/admin/telegram-messages${suffix}`, {
+    headers: { Accept: "application/json", Authorization: `Bearer ${token}` }
+  });
+  return readJson<TelegramPushPage>(response);
+}
+
+export async function deleteTelegramPush(
+  resourceType: TelegramResourceType,
+  resourceId: string,
+  recordId: string,
+  token: string
+) {
+  const response = await fetch(
+    `/api/admin/telegram-messages/${resourceType}/${encodeURIComponent(resourceId)}?recordId=${encodeURIComponent(recordId)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` }
+    }
+  );
+  return (await readJson<TelegramDeleteResponse>(response)).result;
 }
 
 export async function sendTelegramMessage(

@@ -1,22 +1,11 @@
 import { createArticleBrowseHref } from "./admin-display";
 import { createToolPreviewSource } from "./tool-helpers";
-import type { ArticleSummary, Tool } from "./types";
+import type { ArticleSummary, TelegramPushResource, Tool } from "./types";
 import type { Locale } from "./i18n";
 
+export type { TelegramPushResource } from "./types";
+
 export const TELEGRAM_MESSAGE_LIMIT = 32768;
-
-export type TelegramResourceType = "tool" | "article";
-
-export type TelegramPushResource = {
-  type: TelegramResourceType;
-  id: string;
-  title: string;
-  description: string;
-  url: string;
-  demoUrl: string;
-  image: string;
-  tags: string[];
-};
 
 export function createTelegramToolResource(tool: Tool): TelegramPushResource {
   return {
@@ -99,9 +88,42 @@ export function escapeTelegramPreviewHashtags(value: string) {
 export function getTelegramText(locale: Locale) {
   return locale === "zh"
     ? {
-        action: "Telegram 推送",
-        title: "Telegram 推送",
-        description: "编辑当前内容的 Telegram 推送信息，固定消息尾巴由系统自动附加。",
+      action: "Telegram 推送",
+      title: "Telegram 推送",
+      management: {
+        nav: "推送管理",
+        title: "推送管理",
+        description: "集中管理已经发送到 Telegram 的工具和文章；页面加载只读取本站记录，不会请求 Telegram。",
+        searchPlaceholder: "搜索推送内容...",
+        filterAll: "全部",
+        filterTools: "工具",
+        filterArticles: "文章",
+        typeTool: "工具",
+        typeArticle: "文章",
+        statusSynced: "已同步",
+        statusPending: "待更新",
+        imageEnabled: "包含图片",
+        imageDisabled: "没有图片",
+        resourceDeleted: "原内容已删除",
+        emptyTitle: "还没有推送记录",
+        emptyDescription: "从工具或文章卡片完成首次推送后，记录会显示在这里。",
+        noMatchTitle: "没有匹配的推送",
+        noMatchDescription: "换个类型或搜索词再试。",
+        loadMore: "加载更多",
+        viewAction: "浏览推送",
+        viewActionShort: "浏览",
+        editAction: "编辑推送",
+        editActionShort: "编辑",
+        deleteAction: "删除推送",
+        deleteActionShort: "删除",
+        previewTitle: "推送内容",
+        deleteTitle: "删除这条推送吗？",
+        deleteDescription: "将从 Telegram 删除此消息，并移除本站推送记录。此操作无法撤销。",
+        deleted: "Telegram 推送已删除。",
+        deletePermissionDenied: "机器人没有删除目标消息的权限，请调整 Telegram 权限后重试。",
+        serviceDisabled: "Telegram 推送当前已关闭，开启后才能编辑或删除消息。"
+      },
+      description: "编辑当前内容的 Telegram 推送信息，固定消息尾巴由系统自动附加。",
         statuses: {
           not_pushed: "未推送",
           pending: "已保存，等待推送",
@@ -136,6 +158,39 @@ export function getTelegramText(locale: Locale) {
     : {
         action: "Telegram Push",
         title: "Telegram Push",
+        management: {
+          nav: "Push Management",
+          title: "Push Management",
+          description: "Manage tools and articles already sent to Telegram. Loading this page reads only local records and does not contact Telegram.",
+          searchPlaceholder: "Search pushes...",
+          filterAll: "All",
+          filterTools: "Tools",
+          filterArticles: "Articles",
+          typeTool: "Tool",
+          typeArticle: "Article",
+          statusSynced: "Synced",
+          statusPending: "Pending",
+          imageEnabled: "With image",
+          imageDisabled: "No image",
+          resourceDeleted: "Original content deleted",
+          emptyTitle: "No push records yet",
+          emptyDescription: "A record appears here after a tool or article is pushed for the first time.",
+          noMatchTitle: "No matching pushes",
+          noMatchDescription: "Try another type or search term.",
+          loadMore: "Load More",
+          viewAction: "View Push",
+          viewActionShort: "View",
+          editAction: "Edit Push",
+          editActionShort: "Edit",
+          deleteAction: "Delete Push",
+          deleteActionShort: "Delete",
+          previewTitle: "Push Content",
+          deleteTitle: "Delete this push?",
+          deleteDescription: "This deletes the Telegram message and removes its local push record. This action cannot be undone.",
+          deleted: "Telegram push deleted.",
+          deletePermissionDenied: "The bot cannot delete the target message. Update its Telegram permissions, then try again.",
+          serviceDisabled: "Telegram pushing is disabled. Enable it before editing or deleting messages."
+        },
         description: "Edit the current Telegram message; the fixed message footer is appended automatically.",
         statuses: {
           not_pushed: "Not pushed",

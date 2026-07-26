@@ -275,6 +275,42 @@ export type TelegramMessage = {
   defaultMediaUrl: string;
 };
 
+export type TelegramResourceType = "tool" | "article";
+
+export type TelegramPushResource = {
+  type: TelegramResourceType;
+  id: string;
+  title: string;
+  description: string;
+  url: string;
+  demoUrl: string;
+  image: string;
+  tags: string[];
+};
+
+export type TelegramPushRecord = {
+  id: string;
+  resourceType: TelegramResourceType;
+  resourceId: string;
+  title: string;
+  resourceExists: boolean;
+  resource: TelegramPushResource | null;
+  messageMarkdown: string;
+  mediaEnabled: boolean;
+  mediaUrl: string;
+  syncStatus: "pending" | "synced";
+  sentAt: string;
+  updatedAt: string;
+};
+
+export type TelegramPushPage = {
+  records: TelegramPushRecord[];
+  limit: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+  total: number;
+};
+
 export type HomeHeroContent = {
   titleTop: string;
   titleBottom: string;

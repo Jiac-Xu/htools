@@ -70,7 +70,7 @@ type TelegramMessagePayload = {
   locale?: unknown;
 };
 
-type TelegramResource = {
+export type TelegramResource = {
   type: TelegramResourceType;
   id: string;
   title: string;
@@ -79,6 +79,44 @@ type TelegramResource = {
   demoUrl: string;
   image: string;
   tags: string[];
+};
+
+export type TelegramPushListRecord = {
+  id: string;
+  resourceType: TelegramResourceType;
+  resourceId: string;
+  title: string;
+  resourceExists: boolean;
+  resource: TelegramResource | null;
+  messageMarkdown: string;
+  mediaEnabled: boolean;
+  mediaUrl: string;
+  syncStatus: "pending" | "synced";
+  sentAt: string;
+  updatedAt: string;
+};
+
+type TelegramPushListRow = TelegramMessageRow & {
+  tool_id: string | null;
+  tool_name: string | null;
+  tool_description: string | null;
+  tool_url: string | null;
+  tool_demo_url: string | null;
+  tool_image: string | null;
+  tool_tags: string | null;
+  article_id: string | null;
+  article_slug: string | null;
+  article_title: string | null;
+  article_summary: string | null;
+  article_cover_image: string | null;
+  article_category: string | null;
+  article_tags: string | null;
+  article_published: number | null;
+};
+
+type TelegramPushCursor = {
+  updatedAt: string;
+  id: string;
 };
 
 type TelegramApiResponse<T> = {
@@ -200,6 +238,7 @@ function isTelegramMessageMissingError(message: string) {
   return (
     normalized === "telegram message no longer exists." ||
     normalized.includes("message to edit not found") ||
+    normalized.includes("message to delete not found") ||
     normalized.includes("message_id_invalid")
   );
 }
@@ -250,6 +289,97 @@ export async function testTelegramConnection(env: Env) {
 export function readTelegramResourceType(value: unknown): TelegramResourceType {
   if (value === "tool" || value === "article") return value;
   throw new InvalidRequestError("Telegram resource type is invalid.");
+}
+
+export async function listTelegramPushRecords(
+  env: Env,
+  origin: string,
+  options: {
+    cursor?: string | null;
+    limit?: number;
+    query?: string;
+    resourceType?: TelegramResourceType | null;
+  } = {}
+) {
+  const db = await getDatabase(env);
+  await ensureTelegramMessageSchema(db);
+  const limit = Math.min(50, Math.max(1, Math.trunc(options.limit ?? 30)));
+  const query = (options.query ?? "").trim().slice(0, 100);
+  const cursor = readTelegramPushCursor(options.cursor ?? null);
+  const baseConditions = ["m.message_id <> ''"];
+  const baseParams: Array<string | number> = [];
+
+  if (options.resourceType) {
+    baseConditions.push("m.resource_type = ?");
+    baseParams.push(options.resourceType);
+  }
+  if (query) {
+    baseConditions.push(
+      "(COALESCE(t.name, a.title, '') LIKE ? OR m.message_markdown LIKE ?)"
+    );
+    const pattern = `%${query}%`;
+    baseParams.push(pattern, pattern);
+  }
+
+  const pageConditions = [...baseConditions];
+  const pageParams = [...baseParams];
+  if (cursor) {
+    pageConditions.push(
+      "(m.updated_at < ? OR (m.updated_at = ? AND m.id < ?))"
+    );
+    pageParams.push(cursor.updatedAt, cursor.updatedAt, cursor.id);
+  }
+
+  const joins = `
+    LEFT JOIN tools AS t
+      ON m.resource_type = 'tool' AND t.id = m.resource_id
+    LEFT JOIN articles AS a
+      ON m.resource_type = 'article' AND a.id = m.resource_id`;
+  const [pageResult, countRow] = await Promise.all([
+    db.prepare(
+      `SELECT m.*,
+              t.id AS tool_id, t.name AS tool_name,
+              t.description AS tool_description, t.url AS tool_url,
+              t.demo_url AS tool_demo_url, t.image AS tool_image,
+              t.tags AS tool_tags,
+              a.id AS article_id, a.slug AS article_slug,
+              a.title AS article_title, a.summary AS article_summary,
+              a.cover_image AS article_cover_image,
+              a.category AS article_category, a.tags AS article_tags,
+              a.published AS article_published
+       FROM telegram_messages AS m
+       ${joins}
+       WHERE ${pageConditions.join(" AND ")}
+       ORDER BY m.updated_at DESC, m.id DESC
+       LIMIT ?`
+    )
+      .bind(...pageParams, limit + 1)
+      .all<TelegramPushListRow>(),
+    db.prepare(
+      `SELECT COUNT(*) AS total
+       FROM telegram_messages AS m
+       ${joins}
+       WHERE ${baseConditions.join(" AND ")}`
+    )
+      .bind(...baseParams)
+      .first<{ total: number }>()
+  ]);
+  const hasMore = pageResult.results.length > limit;
+  const rows = pageResult.results.slice(0, limit);
+  const records = await Promise.all(
+    rows.map((row) => toTelegramPushListRecord(row, origin))
+  );
+  const lastRow = rows.at(-1);
+
+  return {
+    records,
+    limit,
+    hasMore,
+    nextCursor: hasMore && lastRow
+      ? createTelegramPushCursor({ updatedAt: lastRow.updated_at, id: lastRow.id })
+      : null,
+    total: Number(countRow?.total ?? 0)
+  };
 }
 
 export async function getTelegramMessageState(
@@ -556,6 +686,63 @@ export async function updateTelegramMessage(
   );
 }
 
+export async function deleteTelegramPush(
+  env: Env,
+  resourceType: TelegramResourceType,
+  resourceId: string,
+  recordId?: string
+) {
+  await requireEnabledTelegramSettings(env);
+  const db = await getDatabase(env);
+  await ensureTelegramMessageSchema(db);
+  const normalizedRecordId = recordId?.trim() ?? "";
+  if (normalizedRecordId.length > 256) {
+    throw new InvalidRequestError("Telegram message record is invalid.");
+  }
+  const existing = normalizedRecordId
+    ? await db.prepare(
+        `SELECT * FROM telegram_messages
+         WHERE id = ? AND resource_type = ? AND resource_id = ? AND message_id <> ''
+         LIMIT 1`
+      )
+        .bind(normalizedRecordId, resourceType, resourceId)
+        .first<TelegramMessageRow>()
+    : await db.prepare(
+        `SELECT * FROM telegram_messages
+         WHERE resource_type = ? AND resource_id = ? AND message_id <> ''
+         ORDER BY updated_at DESC, id DESC
+         LIMIT 1`
+      )
+        .bind(resourceType, resourceId)
+        .first<TelegramMessageRow>();
+
+  if (!existing) {
+    throw new InvalidRequestError("Telegram message record was not found.");
+  }
+
+  let messageMissing = false;
+  try {
+    await telegramRequest<boolean>(env, "deleteMessage", {
+      chat_id: existing.chat_id,
+      message_id: Number(existing.message_id)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!isTelegramMessageMissingError(message)) throw error;
+    messageMissing = true;
+  }
+
+  await db.prepare("DELETE FROM telegram_messages WHERE id = ?")
+    .bind(existing.id)
+    .run();
+
+  return {
+    deleted: true as const,
+    id: existing.id,
+    messageMissing
+  };
+}
+
 export async function recoverTelegramMessage(
   env: Env,
   resourceType: TelegramResourceType,
@@ -827,6 +1014,122 @@ function normalizeTelegramMedia(
   }
 
   return { enabled, url };
+}
+
+async function toTelegramPushListRecord(
+  row: TelegramPushListRow,
+  origin: string
+): Promise<TelegramPushListRecord> {
+  const resource = createTelegramPushListResource(row, origin);
+  const mediaEnabled = row.media_enabled === 1;
+  const mediaUrl = getTelegramMediaUrl(row.media_url);
+  const currentHash = await createTelegramMessageFingerprint(
+    row.message_markdown,
+    mediaEnabled,
+    mediaUrl
+  );
+
+  return {
+    id: row.id,
+    resourceType: row.resource_type,
+    resourceId: row.resource_id,
+    title: resource?.title ?? readTelegramMessageTitle(row.message_markdown),
+    resourceExists: Boolean(resource),
+    resource,
+    messageMarkdown: row.message_markdown,
+    mediaEnabled,
+    mediaUrl,
+    syncStatus: row.last_pushed_hash === currentHash ? "synced" : "pending",
+    sentAt: row.sent_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function createTelegramPushListResource(
+  row: TelegramPushListRow,
+  origin: string
+): TelegramResource | null {
+  if (row.resource_type === "tool" && row.tool_id && row.tool_name) {
+    const resource: TelegramResource = {
+      type: "tool",
+      id: row.tool_id,
+      title: row.tool_name,
+      description: row.tool_description ?? "",
+      url: resolveTelegramPublicUrl(row.tool_url ?? "", origin),
+      demoUrl: resolveTelegramPublicUrl(row.tool_demo_url ?? "", origin),
+      image: resolveTelegramPublicUrl(row.tool_image ?? "", origin),
+      tags: safelyParseTags(row.tool_tags ?? "[]")
+    };
+    return { ...resource, image: createDefaultTelegramMediaUrl(resource) };
+  }
+
+  if (row.resource_type === "article" && row.article_id && row.article_title) {
+    const articlePath = `/articles/${encodeURIComponent(row.article_slug ?? row.article_id)}${
+      row.article_published === 1 ? "" : "?preview=1"
+    }`;
+    return {
+      type: "article",
+      id: row.article_id,
+      title: row.article_title,
+      description: row.article_summary ?? "",
+      url: resolveTelegramPublicUrl(articlePath, origin),
+      demoUrl: "",
+      image: resolveTelegramPublicUrl(row.article_cover_image ?? "", origin),
+      tags: Array.from(
+        new Set([
+          row.article_category ?? "",
+          ...safelyParseTags(row.article_tags ?? "[]")
+        ].filter(Boolean))
+      )
+    };
+  }
+
+  return null;
+}
+
+function readTelegramMessageTitle(markdown: string) {
+  const firstLine = markdown
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean) ?? "";
+  const plain = firstLine
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^\*{1,3}|\*{1,3}$/g, "")
+    .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
+    .trim();
+  return plain.slice(0, 120) || "Telegram";
+}
+
+function readTelegramPushCursor(value: string | null): TelegramPushCursor | null {
+  if (!value) return null;
+  if (value.length > 1024) throw new InvalidRequestError("Telegram push cursor is invalid.");
+
+  try {
+    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="));
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as Partial<TelegramPushCursor>;
+    if (
+      typeof parsed.updatedAt !== "string" ||
+      !parsed.updatedAt ||
+      parsed.updatedAt.length > 64 ||
+      typeof parsed.id !== "string" ||
+      !parsed.id ||
+      parsed.id.length > 256
+    ) {
+      throw new Error();
+    }
+    return parsed as TelegramPushCursor;
+  } catch {
+    throw new InvalidRequestError("Telegram push cursor is invalid.");
+  }
+}
+
+function createTelegramPushCursor(cursor: TelegramPushCursor) {
+  const bytes = new TextEncoder().encode(JSON.stringify(cursor));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 async function loadTelegramResource(
