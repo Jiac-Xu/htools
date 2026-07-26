@@ -18,7 +18,11 @@
     <script>
       (() => {
         try {
-          const mode = localStorage.getItem("htools_theme") || "light";
+          const storedMode = localStorage.getItem("htools_theme");
+          const mode =
+            storedMode === "light" || storedMode === "dark" || storedMode === "system"
+              ? storedMode
+              : "system";
           const theme =
             mode === "system"
               ? window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -31,7 +35,7 @@
           document.documentElement.dataset.theme = theme;
           document.documentElement.style.colorScheme = theme;
           document.documentElement.style.backgroundColor =
-            theme === "dark" ? "#000" : "#fff";
+            theme === "dark" ? "#09090b" : "#fff";
         } catch {
           document.documentElement.dataset.theme = "light";
           document.documentElement.style.colorScheme = "light";

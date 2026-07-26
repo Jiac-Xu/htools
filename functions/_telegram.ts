@@ -1,0 +1,1038 @@
+import {
+  InvalidRequestError,
+  UpstreamServiceError,
+  getDatabase,
+  ensureTelegramMessageSchema,
+  jsonError,
+  type ArticleRow,
+  type Env,
+  type ToolRow
+} from "./_shared";
+
+const TELEGRAM_SETTINGS_KEY = "telegram_settings";
+const TELEGRAM_MAX_MESSAGE_LENGTH = 32768;
+const TELEGRAM_MAX_FOOTER_LENGTH = 1000;
+const TELEGRAM_MAX_BODY_LENGTH = 32768;
+const TELEGRAM_RESOURCE_MEDIA_ID = "resource_preview";
+
+export type TelegramSettings = {
+  available: boolean;
+  enabled: boolean;
+  footerMarkdown: string;
+};
+
+export type TelegramConnection = {
+  botName: string;
+  botUsername: string;
+  chatId: string;
+  chatTitle: string;
+  chatType: string;
+  canSend: boolean;
+};
+
+export type TelegramResourceType = "tool" | "article";
+
+export type TelegramMessageRow = {
+  id: string;
+  resource_type: TelegramResourceType;
+  resource_id: string;
+  chat_id: string;
+  target_ref: string;
+  message_id: string;
+  message_markdown: string;
+  media_enabled: number;
+  media_url: string;
+  last_pushed_hash: string;
+  sent_at: string;
+  updated_at: string;
+};
+
+export type TelegramMessageSyncStatus =
+  | "not_pushed"
+  | "pending"
+  | "synced";
+
+export type TelegramMessageState = {
+  exists: boolean;
+  targetChanged: boolean;
+  syncStatus: TelegramMessageSyncStatus;
+  bodyMarkdown: string;
+  mediaEnabled: boolean;
+  mediaUrl: string;
+  defaultBodyMarkdown: string;
+  defaultMediaUrl: string;
+};
+
+type TelegramMessagePayload = {
+  bodyMarkdown?: unknown;
+  mediaEnabled?: unknown;
+  mediaUrl?: unknown;
+  locale?: unknown;
+};
+
+type TelegramResource = {
+  type: TelegramResourceType;
+  id: string;
+  title: string;
+  description: string;
+  url: string;
+  demoUrl: string;
+  image: string;
+  tags: string[];
+};
+
+type TelegramApiResponse<T> = {
+  ok?: boolean;
+  result?: T;
+  description?: string;
+  error_code?: number;
+};
+
+type TelegramUser = {
+  id: number;
+  first_name?: string;
+  username?: string;
+};
+
+type TelegramChat = {
+  id: number;
+  title?: string;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+  type?: string;
+  permissions?: { can_send_messages?: boolean };
+};
+
+type TelegramChatMember = {
+  status?: string;
+  can_post_messages?: boolean;
+  can_send_messages?: boolean;
+};
+
+type TelegramMessage = {
+  message_id: number;
+  chat: TelegramChat;
+};
+
+type TelegramInputRichMessage = {
+  markdown: string;
+  media?: Array<{
+    id: string;
+    media: {
+      type: "photo";
+      media: string;
+    };
+  }>;
+};
+
+export async function getTelegramSettings(env: Env): Promise<TelegramSettings> {
+  const available = hasTelegramEnvironment(env);
+  const db = await getDatabase(env);
+  const row = await db.prepare("SELECT value FROM app_settings WHERE key = ?")
+    .bind(TELEGRAM_SETTINGS_KEY)
+    .first<{ value: string }>();
+
+  if (!row?.value) return { available, enabled: false, footerMarkdown: "" };
+
+  try {
+    const parsed = JSON.parse(row.value) as {
+      enabled?: unknown;
+      footerMarkdown?: unknown;
+    };
+    return {
+      available,
+      enabled: available && parsed.enabled === true,
+      footerMarkdown: normalizeFooterMarkdown(parsed.footerMarkdown)
+    };
+  } catch {
+    return { available, enabled: false, footerMarkdown: "" };
+  }
+}
+
+export function writeTelegramErrorResponse(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : fallback;
+  if (isTelegramMessageMissingError(message)) {
+    return jsonError(message, "TELEGRAM_MESSAGE_NOT_FOUND", { status: 404 });
+  }
+  if (isTelegramPermissionError(message)) {
+    return jsonError(message, "TELEGRAM_PERMISSION_DENIED", { status: 403 });
+  }
+  if (message === "Telegram environment variables are not configured.") {
+    return jsonError(message, "TELEGRAM_NOT_CONFIGURED", { status: 400 });
+  }
+  if (message === "Telegram pushing is disabled.") {
+    return jsonError(message, "TELEGRAM_DISABLED", { status: 400 });
+  }
+  if (
+    message === "Telegram message record was not found." ||
+    message === "Telegram message no longer exists."
+  ) {
+    return jsonError(message, "TELEGRAM_MESSAGE_NOT_FOUND", { status: 404 });
+  }
+  if (message === "This content has already been pushed to Telegram.") {
+    return jsonError(message, "TELEGRAM_MESSAGE_EXISTS", { status: 409 });
+  }
+  if (message === "Telegram target has changed.") {
+    return jsonError(message, "TELEGRAM_TARGET_CHANGED", { status: 409 });
+  }
+  if (message === "Tool not found." || message === "Article not found.") {
+    return jsonError(message, "NOT_FOUND", { status: 404 });
+  }
+  if (
+    message.includes("32768 character limit") ||
+    message.includes("message body is too long") ||
+    message.includes("message footer is too long")
+  ) {
+    return jsonError(message, "TELEGRAM_MESSAGE_TOO_LONG", { status: 400 });
+  }
+  if (error instanceof UpstreamServiceError || message.startsWith("Telegram API:")) {
+    return jsonError(message, "TELEGRAM_UNAVAILABLE", { status: 502 });
+  }
+  if (error instanceof InvalidRequestError) {
+    return jsonError(message, "INVALID_REQUEST", { status: 400 });
+  }
+  return jsonError(fallback, "SERVER_ERROR", { status: 500 });
+}
+
+function isTelegramMessageMissingError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized === "telegram message no longer exists." ||
+    normalized.includes("message to edit not found") ||
+    normalized.includes("message_id_invalid")
+  );
+}
+
+function isTelegramPermissionError(message: string) {
+  const normalized = message.toLowerCase();
+  return [
+    "cannot post",
+    "cannot send",
+    "not a member",
+    "not enough rights",
+    "bot was kicked",
+    "bot was blocked",
+    "can't be edited",
+    "cannot be edited",
+    "forbidden"
+  ].some((fragment) => normalized.includes(fragment));
+}
+
+export async function saveTelegramSettings(
+  env: Env,
+  payload: { enabled?: unknown; footerMarkdown?: unknown }
+) {
+  const db = await getDatabase(env);
+  const enabled = payload.enabled === true;
+  const footerMarkdown = normalizeFooterMarkdown(payload.footerMarkdown);
+
+  if (enabled && !hasTelegramEnvironment(env)) {
+    throw new InvalidRequestError("Telegram environment variables are not configured.");
+  }
+
+  const settings = { enabled, footerMarkdown };
+  await db.prepare(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
+  )
+    .bind(TELEGRAM_SETTINGS_KEY, JSON.stringify(settings))
+    .run();
+
+  return getTelegramSettings(env);
+}
+
+export async function testTelegramConnection(env: Env) {
+  return resolveTelegramConnection(env);
+}
+
+export function readTelegramResourceType(value: unknown): TelegramResourceType {
+  if (value === "tool" || value === "article") return value;
+  throw new InvalidRequestError("Telegram resource type is invalid.");
+}
+
+export async function getTelegramMessageState(
+  env: Env,
+  resourceType: TelegramResourceType,
+  resourceId: string,
+  origin: string,
+  locale: "zh" | "en" = "zh"
+): Promise<TelegramMessageState> {
+  const settings = await requireEnabledTelegramSettings(env);
+  const db = await getDatabase(env);
+  await ensureTelegramMessageSchema(db);
+  const resource = await loadTelegramResource(db, resourceType, resourceId, origin);
+  const row = await db.prepare(
+    `SELECT * FROM telegram_messages
+     WHERE resource_type = ? AND resource_id = ?
+     ORDER BY updated_at DESC, id DESC
+     LIMIT 1`
+  )
+    .bind(resource.type, resource.id)
+    .first<TelegramMessageRow>();
+  const defaultBody = buildTelegramMessageMarkdown(
+    resource,
+    createDefaultTelegramBody(resource),
+    settings.footerMarkdown,
+    locale
+  );
+  const defaultMediaUrl = createDefaultTelegramMediaUrl(resource);
+
+  return toTelegramMessageState(
+    row,
+    defaultBody,
+    defaultMediaUrl,
+    getTelegramTarget(env)
+  );
+}
+
+export async function saveTelegramMessage(
+  env: Env,
+  resourceType: TelegramResourceType,
+  resourceId: string,
+  origin: string,
+  payload: TelegramMessagePayload,
+  locale: "zh" | "en" = "zh"
+) {
+  await requireEnabledTelegramSettings(env);
+  const db = await getDatabase(env);
+  await ensureTelegramMessageSchema(db);
+  const resource = await loadTelegramResource(db, resourceType, resourceId, origin);
+  const bodyMarkdown = normalizeBodyMarkdown(payload.bodyMarkdown);
+  const defaultMediaUrl = createDefaultTelegramMediaUrl(resource);
+  const media = normalizeTelegramMedia(payload, defaultMediaUrl, false);
+  const now = new Date().toISOString();
+  const existing = await db.prepare(
+    `SELECT * FROM telegram_messages
+     WHERE resource_type = ? AND resource_id = ?
+     ORDER BY updated_at DESC, id DESC
+     LIMIT 1`
+  )
+    .bind(resource.type, resource.id)
+    .first<TelegramMessageRow>();
+
+  if (existing) {
+    await db.prepare(
+      `UPDATE telegram_messages
+       SET message_markdown = ?, media_enabled = ?, media_url = ?, updated_at = ?
+       WHERE id = ?`
+    )
+      .bind(bodyMarkdown, media.enabled ? 1 : 0, media.url, now, existing.id)
+      .run();
+  } else {
+    await db.prepare(
+      `INSERT INTO telegram_messages
+        (id, resource_type, resource_id, chat_id, target_ref, message_id,
+         message_markdown, media_enabled,
+         media_url, sent_at, updated_at)
+       VALUES (?, ?, ?, '', '', '', ?, ?, ?, '', ?)`
+    )
+      .bind(
+        crypto.randomUUID(),
+        resource.type,
+        resource.id,
+        bodyMarkdown,
+        media.enabled ? 1 : 0,
+        media.url,
+        now
+      )
+      .run();
+  }
+
+  return getTelegramMessageState(
+    env,
+    resource.type,
+    resource.id,
+    origin,
+    locale
+  );
+}
+
+export async function sendTelegramMessage(
+  env: Env,
+  resourceType: TelegramResourceType,
+  resourceId: string,
+  origin: string,
+  payload: TelegramMessagePayload
+) {
+  const settings = await requireEnabledTelegramSettings(env);
+  const db = await getDatabase(env);
+  await ensureTelegramMessageSchema(db);
+  const resource = await loadTelegramResource(db, resourceType, resourceId, origin);
+  const existing = await db.prepare(
+    `SELECT * FROM telegram_messages
+     WHERE resource_type = ? AND resource_id = ?
+     ORDER BY updated_at DESC, id DESC
+     LIMIT 1`
+  )
+    .bind(resource.type, resource.id)
+    .first<TelegramMessageRow>();
+  if (existing?.message_id) {
+    throw new InvalidRequestError("This content has already been pushed to Telegram.");
+  }
+
+  const messageMarkdown = normalizeBodyMarkdown(payload.bodyMarkdown);
+  const defaultBody = buildTelegramMessageMarkdown(
+    resource,
+    createDefaultTelegramBody(resource),
+    settings.footerMarkdown,
+    payload.locale === "en" ? "en" : "zh"
+  );
+  const media = normalizeTelegramMedia(
+    payload,
+    createDefaultTelegramMediaUrl(resource),
+    false
+  );
+  const pushedHash = await createTelegramMessageFingerprint(
+    messageMarkdown,
+    media.enabled,
+    media.url
+  );
+  const targetRef = getTelegramTarget(env);
+  const message = await telegramRequest<TelegramMessage>(env, "sendRichMessage", {
+    chat_id: targetRef,
+    rich_message: createTelegramRichMessage(
+      messageMarkdown,
+      media.enabled ? media.url : ""
+    )
+  });
+  const now = new Date().toISOString();
+  const chatId = String(message.chat.id);
+
+  if (existing) {
+    await db.prepare(
+      `UPDATE telegram_messages
+       SET chat_id = ?, target_ref = ?, message_id = ?, message_markdown = ?,
+           media_enabled = ?, media_url = ?, last_pushed_hash = ?,
+           sent_at = ?, updated_at = ?
+       WHERE id = ?`
+    )
+      .bind(
+        chatId,
+        targetRef,
+        String(message.message_id),
+        messageMarkdown,
+        media.enabled ? 1 : 0,
+        media.url,
+        pushedHash,
+        now,
+        now,
+        existing.id
+      )
+      .run();
+  } else {
+    await db.prepare(
+      `INSERT INTO telegram_messages
+        (id, resource_type, resource_id, chat_id, target_ref, message_id,
+         message_markdown, media_enabled,
+         media_url, last_pushed_hash, sent_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        crypto.randomUUID(),
+        resource.type,
+        resource.id,
+        chatId,
+        targetRef,
+        String(message.message_id),
+        messageMarkdown,
+        media.enabled ? 1 : 0,
+        media.url,
+        pushedHash,
+        now,
+        now
+      )
+      .run();
+  }
+
+  const row = await db.prepare(
+    `SELECT * FROM telegram_messages
+     WHERE resource_type = ? AND resource_id = ? AND chat_id = ?`
+  )
+    .bind(resource.type, resource.id, chatId)
+    .first<TelegramMessageRow>();
+
+  return toTelegramMessageState(
+    row,
+    defaultBody,
+    createDefaultTelegramMediaUrl(resource),
+    targetRef
+  );
+}
+
+export async function updateTelegramMessage(
+  env: Env,
+  resourceType: TelegramResourceType,
+  resourceId: string,
+  origin: string,
+  payload: TelegramMessagePayload
+) {
+  const settings = await requireEnabledTelegramSettings(env);
+  const db = await getDatabase(env);
+  await ensureTelegramMessageSchema(db);
+  const resource = await loadTelegramResource(db, resourceType, resourceId, origin);
+  const existing = await db.prepare(
+    `SELECT * FROM telegram_messages
+     WHERE resource_type = ? AND resource_id = ? AND message_id <> ''
+     ORDER BY updated_at DESC, id DESC
+     LIMIT 1`
+  )
+    .bind(resource.type, resource.id)
+    .first<TelegramMessageRow>();
+  if (!existing) {
+    throw new InvalidRequestError("Telegram message record was not found.");
+  }
+  const targetRef = getTelegramTarget(env);
+  if (hasTelegramTargetChanged(existing, targetRef)) {
+    throw new InvalidRequestError("Telegram target has changed.");
+  }
+
+  const messageMarkdown = normalizeBodyMarkdown(payload.bodyMarkdown);
+  const defaultBody = buildTelegramMessageMarkdown(
+    resource,
+    createDefaultTelegramBody(resource),
+    settings.footerMarkdown,
+    payload.locale === "en" ? "en" : "zh"
+  );
+  const defaultMediaUrl = createDefaultTelegramMediaUrl(resource);
+  const currentMediaEnabled = existing.media_enabled === 1;
+  const currentMediaUrl = getTelegramMediaUrl(existing.media_url) || defaultMediaUrl;
+  const media = normalizeTelegramMedia(
+    payload,
+    currentMediaUrl,
+    currentMediaEnabled
+  );
+  const pushedHash = await createTelegramMessageFingerprint(
+    messageMarkdown,
+    media.enabled,
+    media.url
+  );
+  try {
+    await telegramRequest<TelegramMessage>(env, "editMessageText", {
+      chat_id: existing.chat_id,
+      message_id: Number(existing.message_id),
+      rich_message: createTelegramRichMessage(
+        messageMarkdown,
+        media.enabled ? media.url : ""
+      )
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : "";
+    if (isTelegramMessageMissingError(message)) {
+      throw new InvalidRequestError("Telegram message no longer exists.");
+    }
+    if (!message.includes("message is not modified")) {
+      throw error;
+    }
+  }
+
+  const now = new Date().toISOString();
+  await db.prepare(
+    `UPDATE telegram_messages
+     SET target_ref = ?, message_markdown = ?, media_enabled = ?, media_url = ?,
+         last_pushed_hash = ?, updated_at = ?
+     WHERE id = ?`
+  )
+    .bind(
+      targetRef,
+      messageMarkdown,
+      media.enabled ? 1 : 0,
+      media.url,
+      pushedHash,
+      now,
+      existing.id
+    )
+    .run();
+
+  const row = await db.prepare("SELECT * FROM telegram_messages WHERE id = ?")
+    .bind(existing.id)
+    .first<TelegramMessageRow>();
+  return toTelegramMessageState(
+    row,
+    defaultBody,
+    defaultMediaUrl,
+    targetRef
+  );
+}
+
+export async function recoverTelegramMessage(
+  env: Env,
+  resourceType: TelegramResourceType,
+  resourceId: string,
+  origin: string,
+  payload: TelegramMessagePayload,
+  locale: "zh" | "en" = "zh"
+) {
+  await requireEnabledTelegramSettings(env);
+  const db = await getDatabase(env);
+  await ensureTelegramMessageSchema(db);
+  const resource = await loadTelegramResource(db, resourceType, resourceId, origin);
+  const existing = await db.prepare(
+    `SELECT * FROM telegram_messages
+     WHERE resource_type = ? AND resource_id = ? AND message_id <> ''
+     ORDER BY updated_at DESC, id DESC
+     LIMIT 1`
+  )
+    .bind(resource.type, resource.id)
+    .first<TelegramMessageRow>();
+
+  if (!existing) {
+    throw new InvalidRequestError("Telegram message record was not found.");
+  }
+
+  const bodyMarkdown = payload.bodyMarkdown === undefined
+    ? existing.message_markdown
+    : normalizeBodyMarkdown(payload.bodyMarkdown);
+  const defaultMediaUrl = createDefaultTelegramMediaUrl(resource);
+  const currentMediaEnabled = existing.media_enabled === 1;
+  const currentMediaUrl = getTelegramMediaUrl(existing.media_url) || defaultMediaUrl;
+  const media = normalizeTelegramMedia(
+    payload,
+    currentMediaUrl,
+    currentMediaEnabled
+  );
+
+  await db.prepare(
+    `UPDATE telegram_messages
+     SET chat_id = '', target_ref = '', message_id = '', message_markdown = ?,
+         media_enabled = ?, media_url = ?, last_pushed_hash = '', sent_at = '',
+         updated_at = ?
+     WHERE id = ?`
+  )
+    .bind(
+      bodyMarkdown,
+      media.enabled ? 1 : 0,
+      media.url,
+      new Date().toISOString(),
+      existing.id
+    )
+    .run();
+
+  return getTelegramMessageState(
+    env,
+    resource.type,
+    resource.id,
+    origin,
+    locale
+  );
+}
+
+export function buildTelegramMessageMarkdown(
+  resource: TelegramResource,
+  bodyMarkdown: string,
+  footerMarkdown: string,
+  locale: "zh" | "en"
+) {
+  const labels = locale === "zh"
+    ? { article: "文章地址", project: "项目地址", demo: "演示地址" }
+    : { article: "Article", project: "Project", demo: "Demo" };
+  const tags = resource.tags
+    .map(toTelegramHashtag)
+    .filter(Boolean)
+    .join(" ");
+  const linkLabel = resource.type === "article" ? labels.article : labels.project;
+  const sections = [
+    bodyMarkdown.trim(),
+    tags,
+    `${linkLabel}：${resource.url}`,
+    resource.demoUrl ? `${labels.demo}：${resource.demoUrl}` : "",
+    footerMarkdown.trim()
+  ].filter(Boolean);
+  const message = sections.join("\n\n");
+
+  if (Array.from(message).length > TELEGRAM_MAX_MESSAGE_LENGTH) {
+    throw new InvalidRequestError("Telegram message exceeds the 32768 character limit.");
+  }
+  return message;
+}
+
+export function createTelegramRichMessage(
+  markdown: string,
+  mediaUrl: string
+): TelegramInputRichMessage {
+  const normalizedMediaUrl = getTelegramMediaUrl(mediaUrl);
+  const richMessage: TelegramInputRichMessage = {
+    markdown: normalizedMediaUrl
+      ? `${markdown.trim()}\n\n![](tg://photo?id=${TELEGRAM_RESOURCE_MEDIA_ID})`
+      : markdown.trim()
+  };
+
+  if (normalizedMediaUrl) {
+    richMessage.media = [
+      {
+          id: TELEGRAM_RESOURCE_MEDIA_ID,
+        media: {
+          type: "photo",
+          media: normalizedMediaUrl
+        }
+      }
+    ];
+  }
+
+  if (Array.from(richMessage.markdown).length > TELEGRAM_MAX_MESSAGE_LENGTH) {
+    throw new InvalidRequestError("Telegram message exceeds the 32768 character limit.");
+  }
+
+  return richMessage;
+}
+
+function hasTelegramEnvironment(env: Env) {
+  return Boolean(getTelegramToken(env) && getTelegramTarget(env));
+}
+
+async function requireEnabledTelegramSettings(env: Env) {
+  const settings = await getTelegramSettings(env);
+  if (!settings.available) {
+    throw new InvalidRequestError("Telegram environment variables are not configured.");
+  }
+  if (!settings.enabled) {
+    throw new InvalidRequestError("Telegram pushing is disabled.");
+  }
+  return settings;
+}
+
+async function resolveTelegramConnection(env: Env): Promise<TelegramConnection> {
+  const bot = await telegramRequest<TelegramUser>(env, "getMe", {});
+  const chat = await telegramRequest<TelegramChat>(env, "getChat", {
+    chat_id: getTelegramTarget(env)
+  });
+  const type = chat.type ?? "unknown";
+
+  if (type !== "private") {
+    const member = await telegramRequest<TelegramChatMember>(env, "getChatMember", {
+      chat_id: chat.id,
+      user_id: bot.id
+    });
+    const status = member.status ?? "";
+    if (status === "left" || status === "kicked") {
+      throw new InvalidRequestError("Telegram bot is not a member of the target chat.");
+    }
+    if (
+      type === "channel" &&
+      status !== "creator" &&
+      (status !== "administrator" || member.can_post_messages === false)
+    ) {
+      throw new InvalidRequestError("Telegram bot cannot post to the target channel.");
+    }
+    if (
+      (type === "group" || type === "supergroup") &&
+      (member.can_send_messages === false ||
+        (status === "member" && chat.permissions?.can_send_messages === false))
+    ) {
+      throw new InvalidRequestError("Telegram bot cannot send messages to the target group.");
+    }
+  }
+
+  return {
+    botName: bot.first_name?.trim() ?? "",
+    botUsername: bot.username ?? "",
+    chatId: String(chat.id),
+    chatTitle: getTelegramChatTitle(chat),
+    chatType: type,
+    canSend: true
+  };
+}
+
+async function telegramRequest<T>(
+  env: Env,
+  method: string,
+  payload: Record<string, unknown>
+): Promise<T> {
+  const token = getTelegramToken(env);
+  if (!token || !getTelegramTarget(env)) {
+    throw new InvalidRequestError("Telegram environment variables are not configured.");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  } catch {
+    throw new UpstreamServiceError("Telegram API request failed.");
+  }
+
+  const data = (await response.json().catch(() => ({}))) as TelegramApiResponse<T>;
+  if (!response.ok || data.ok !== true || data.result === undefined) {
+    throw new UpstreamServiceError(
+      data.description ? `Telegram API: ${data.description}` : "Telegram API request failed."
+    );
+  }
+  return data.result;
+}
+
+function getTelegramToken(env: Env) {
+  const token = env.TGTOKEN?.trim() ?? "";
+  return /^\d+:[A-Za-z0-9_-]{20,}$/.test(token) ? token : "";
+}
+
+function getTelegramTarget(env: Env) {
+  const target = env.TGID?.trim() ?? "";
+  if (/^@[A-Za-z][A-Za-z0-9_]{3,31}$/.test(target)) return target;
+  if (/^-?\d{5,20}$/.test(target)) return target;
+  return "";
+}
+
+function normalizeFooterMarkdown(value: unknown) {
+  const footer = typeof value === "string"
+    ? value
+        .replace(/\r\n?/g, "\n")
+        .replace(
+          /(^|[\s｜|])([^\[\]\n()｜|]+?)\s*\((https?:\/\/[^)\s]+)\)/g,
+          (_, prefix: string, label: string, url: string) =>
+            `${prefix}[${label.trim()}](${url})`
+        )
+        .replace(/\s*｜\s*/g, " ｜ ")
+        .trim()
+    : "";
+  if (Array.from(footer).length > TELEGRAM_MAX_FOOTER_LENGTH) {
+    throw new InvalidRequestError("Telegram message footer is too long.");
+  }
+  return footer;
+}
+
+function normalizeBodyMarkdown(value: unknown) {
+  const body = typeof value === "string" ? value.replace(/\r\n?/g, "\n").trim() : "";
+  if (!body) throw new InvalidRequestError("Telegram message body is required.");
+  if (Array.from(body).length > TELEGRAM_MAX_BODY_LENGTH) {
+    throw new InvalidRequestError("Telegram message body is too long.");
+  }
+  return body;
+}
+
+function normalizeTelegramMedia(
+  payload: TelegramMessagePayload,
+  fallbackUrl: string,
+  fallbackEnabled: boolean
+) {
+  const enabled = typeof payload.mediaEnabled === "boolean"
+    ? payload.mediaEnabled
+    : fallbackEnabled;
+  const rawUrl = typeof payload.mediaUrl === "string"
+    ? payload.mediaUrl.trim()
+    : fallbackUrl;
+  const url = getTelegramMediaUrl(rawUrl);
+
+  if (rawUrl && !url) {
+    throw new InvalidRequestError("Telegram image URL must use HTTP or HTTPS.");
+  }
+  if (enabled && !url) {
+    throw new InvalidRequestError("Telegram image URL is required when image sending is enabled.");
+  }
+  if (url.length > 2048) {
+    throw new InvalidRequestError("Telegram image URL is too long.");
+  }
+
+  return { enabled, url };
+}
+
+async function loadTelegramResource(
+  db: D1Database,
+  type: TelegramResourceType,
+  id: string,
+  origin: string
+): Promise<TelegramResource> {
+  if (type === "tool") {
+    const tool = await db.prepare("SELECT * FROM tools WHERE id = ?")
+      .bind(id)
+      .first<ToolRow>();
+    if (!tool) throw new InvalidRequestError("Tool not found.");
+    return {
+      type,
+      id: tool.id,
+      title: tool.name,
+      description: tool.description,
+      url: resolveTelegramPublicUrl(tool.url, origin),
+      demoUrl: resolveTelegramPublicUrl(tool.demo_url ?? "", origin),
+      image: resolveTelegramPublicUrl(tool.image, origin),
+      tags: safelyParseTags(tool.tags)
+    };
+  }
+
+  const article = await db.prepare("SELECT * FROM articles WHERE id = ?")
+    .bind(id)
+    .first<ArticleRow>();
+  if (!article) throw new InvalidRequestError("Article not found.");
+  const articlePath = `/articles/${encodeURIComponent(article.slug)}${
+    article.published === 1 ? "" : "?preview=1"
+  }`;
+  return {
+    type,
+    id: article.id,
+    title: article.title,
+    description: article.summary,
+    url: resolveTelegramPublicUrl(articlePath, origin),
+    demoUrl: "",
+    image: resolveTelegramPublicUrl(article.cover_image, origin),
+    tags: Array.from(
+      new Set([article.category, ...safelyParseTags(article.tags)].filter(Boolean))
+    )
+  };
+}
+
+function createDefaultTelegramBody(resource: TelegramResource) {
+  const description = escapeTelegramMarkdownText(resource.description);
+  const title = escapeTelegramMarkdownText(resource.title);
+  return description ? `**${title}**\n\n${description}` : `**${title}**`;
+}
+
+async function toTelegramMessageState(
+  row: TelegramMessageRow | null,
+  defaultBody: string,
+  defaultMediaUrl: string,
+  targetRef: string
+): Promise<TelegramMessageState> {
+  const sentMediaUrl = getTelegramMediaUrl(row?.media_url ?? "") || defaultMediaUrl;
+  const bodyMarkdown = row?.message_markdown || defaultBody;
+  const mediaEnabled = row ? row.media_enabled === 1 : false;
+  const currentHash = await createTelegramMessageFingerprint(
+    bodyMarkdown,
+    mediaEnabled,
+    sentMediaUrl
+  );
+  return {
+    exists: Boolean(row?.message_id),
+    targetChanged: hasTelegramTargetChanged(row, targetRef),
+    syncStatus: !row?.message_id
+      ? "not_pushed"
+      : row.last_pushed_hash === currentHash
+        ? "synced"
+        : "pending",
+    bodyMarkdown,
+    mediaEnabled,
+    mediaUrl: sentMediaUrl,
+    defaultBodyMarkdown: defaultBody,
+    defaultMediaUrl
+  };
+}
+
+export function hasTelegramTargetChanged(
+  row: TelegramMessageRow | null,
+  targetRef: string
+) {
+  if (!row?.message_id || !targetRef) return false;
+  if (row.target_ref) return row.target_ref !== targetRef;
+  return Boolean(row.chat_id && row.chat_id !== targetRef);
+}
+
+export async function createTelegramMessageFingerprint(
+  bodyMarkdown: string,
+  mediaEnabled: boolean,
+  mediaUrl: string
+) {
+  const payload = JSON.stringify({
+    bodyMarkdown,
+    mediaEnabled,
+    mediaUrl: mediaEnabled ? mediaUrl : ""
+  });
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(payload)
+  );
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+}
+
+function createDefaultTelegramMediaUrl(resource: TelegramResource) {
+  const repoPath = resource.type === "tool" ? getGitHubRepoPath(resource.url) : "";
+  const currentImage = getTelegramMediaUrl(resource.image);
+
+  if (resource.type === "article") return currentImage;
+
+  if (
+    repoPath &&
+    (!currentImage || isGeneratedPreviewUrl(currentImage))
+  ) {
+    return `https://opengraph.githubassets.com/htools/${repoPath}`;
+  }
+
+  if (currentImage) return currentImage;
+  const resourceUrl = getTelegramMediaUrl(resource.url);
+  return resourceUrl
+    ? `https://image.thum.io/get/width/1200/crop/720/${resourceUrl}`
+    : "";
+}
+
+function getGitHubRepoPath(value: string) {
+  try {
+    const url = new URL(value);
+    if (!["github.com", "www.github.com"].includes(url.hostname.toLowerCase())) return "";
+    const [owner, repository] = url.pathname.split("/").filter(Boolean).slice(0, 2);
+    return owner && repository
+      ? `${owner}/${repository.replace(/\.git$/i, "")}`
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+function isGeneratedPreviewUrl(value: string) {
+  try {
+    return ["image.thum.io", "opengraph.githubassets.com"].includes(
+      new URL(value).hostname.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+}
+
+function safelyParseTags(value: string) {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((tag): tag is string => typeof tag === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function toTelegramHashtag(value: string) {
+  const normalized = value.trim().replace(/^#+/, "").replace(/[^\p{L}\p{N}_]+/gu, "_");
+  return normalized ? `#${normalized.replace(/^_+|_+$/g, "")}` : "";
+}
+
+function getTelegramChatTitle(chat: TelegramChat) {
+  const name = [chat.first_name, chat.last_name].filter(Boolean).join(" ").trim();
+  return chat.title?.trim() || name || (chat.username ? `@${chat.username}` : String(chat.id));
+}
+
+function getTelegramMediaUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url.toString()
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+function resolveTelegramPublicUrl(value: string, origin: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  try {
+    const url = new URL(trimmed, normalizeTelegramOrigin(origin));
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function normalizeTelegramOrigin(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol === "http:" || url.protocol === "https:") return url.origin;
+  } catch {
+    // Fall through to the invalid local origin below.
+  }
+  return "https://invalid.local";
+}
+
+function escapeTelegramMarkdownText(value: string) {
+  return value.trim().replace(/\\/g, "\\\\").replace(/\*/g, "\\*");
+}

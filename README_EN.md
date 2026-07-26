@@ -68,10 +68,14 @@ The application reads the following environment variables:
 | `GITHUB_TOKEN` | No | Secret | Reads public GitHub repository metadata while adding or editing tools and raises the GitHub API request limit. |
 | `TURNSTILE_SITE_KEY` | No; configure together with the secret key | Plain variable | Cloudflare Turnstile Site Key used to load the widget on the administrator login page. |
 | `TURNSTILE_SECRET_KEY` | No; configure together with the site key | Secret | Cloudflare Turnstile Secret Key used by the server to verify challenge results. |
+| `TGTOKEN` | No; configure together with `TGID` | Secret | Telegram Bot Token used for administrator-triggered tool or article pushes. |
+| `TGID` | No; configure together with `TGTOKEN` | Plain variable | Telegram recipient; accepts a user, private group, supergroup, or channel numeric ID, or a public channel username. |
 
 Use a read-only `GITHUB_TOKEN` without repository write, delete, or administration permissions. Without it, the admin browser requests GitHub's public API directly. The public submission page always uses the visitor's browser and never uses the site token.
 
 To use Turnstile, add the deployed domain in Cloudflare, configure both keys, redeploy, and enable it under Admin → Service Settings.
+
+To use Telegram pushing, add the bot to the target chat with permission to send messages, configure `TGTOKEN` and `TGID`, redeploy, then test and enable it under Admin → Service Settings. The fixed Markdown footer is configured there. Tools and articles are pushed only through an explicit administrator action on their cards; creating, editing, importing, or synchronizing content never sends automatically. Pushes use Telegram Rich Messages with Rich Markdown features such as headings, quotations, lists, and tables. A tool preview or article cover is prefilled, but image sending starts disabled; articles without a cover do not generate a substitute screenshot. “Save” stores the current content only, while “Push” or “Update” creates or edits the Telegram message. If the original message was deleted, keep the body and image while rebuilding the push; if permissions are denied, update the bot permissions and retry.
 
 ## Local Development
 

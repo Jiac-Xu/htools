@@ -4,6 +4,7 @@ import {
   badRequest,
   createUniqueArticleSlug,
   getDatabase,
+  ensureTelegramMessageSchema,
   invalidatePublicApiCache,
   json,
   jsonDeleted,
@@ -161,6 +162,7 @@ export const onRequestDelete: PagesFunction<Env> = async ({
 
   const id = String(params.id ?? "");
   const db = await getDatabase(env);
+  await ensureTelegramMessageSchema(db);
   const result = await db.prepare("DELETE FROM articles WHERE id = ?").bind(id).run();
   if (!result.meta.changes) {
     return jsonError("Article not found.", "NOT_FOUND", { status: 404 });
@@ -168,6 +170,9 @@ export const onRequestDelete: PagesFunction<Env> = async ({
   await db.prepare("UPDATE content_items SET article_id = NULL WHERE article_id = ?")
     .bind(id)
     .run();
+  await db.prepare(
+    "DELETE FROM telegram_messages WHERE resource_type = 'article' AND resource_id = ?"
+  ).bind(id).run();
   await invalidatePublicApiCache(env);
   return jsonDeleted("article", id);
 };

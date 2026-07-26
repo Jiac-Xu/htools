@@ -23,7 +23,7 @@ type BackupText = {
   backupTooLarge: string;
 };
 
-const SUPPORTED_BACKUP_VERSION = "3";
+const SUPPORTED_BACKUP_VERSION = "4";
 const MAX_BACKUP_FILE_BYTES = 10 * 1024 * 1024;
 const BACKUP_DATA_FIELDS = [
   "tools",

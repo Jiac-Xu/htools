@@ -2,6 +2,8 @@ export type Env = {
   DB: D1Database;
   ADMIN_PASSWORD?: string;
   GITHUB_TOKEN?: string;
+  TGTOKEN?: string;
+  TGID?: string;
   TURNSTILE_SITE_KEY?: string;
   TURNSTILE_SECRET_KEY?: string;
 };
@@ -460,9 +462,28 @@ const DEFAULT_ADMIN_CATEGORY_SETTINGS: AdminCategorySettings = {
 };
 const initializedDatabases = new WeakSet<D1Database>();
 const databaseInitializationPromises = new WeakMap<D1Database, Promise<void>>();
+const initializedTelegramMessageDatabases = new WeakSet<D1Database>();
+const telegramMessageInitializationPromises = new WeakMap<D1Database, Promise<void>>();
 const DATABASE_SCHEMA_VERSION_KEY = "database_schema_version";
 // Increment this whenever SCHEMA_STATEMENTS or compatibility column upgrades change.
-const DATABASE_SCHEMA_VERSION = 10;
+const DATABASE_SCHEMA_VERSION = 11;
+const TELEGRAM_MESSAGE_TABLE_STATEMENT = `CREATE TABLE IF NOT EXISTS telegram_messages (
+  id TEXT PRIMARY KEY,
+  resource_type TEXT NOT NULL CHECK (resource_type IN ('tool', 'article')),
+  resource_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  target_ref TEXT NOT NULL DEFAULT '',
+  message_id TEXT NOT NULL,
+  message_markdown TEXT NOT NULL DEFAULT '',
+  media_enabled INTEGER NOT NULL DEFAULT 0,
+  media_url TEXT NOT NULL DEFAULT '',
+  last_pushed_hash TEXT NOT NULL DEFAULT '',
+  sent_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(resource_type, resource_id, chat_id)
+)`;
+const TELEGRAM_MESSAGE_INDEX_STATEMENT = `CREATE INDEX IF NOT EXISTS idx_telegram_messages_resource
+  ON telegram_messages (resource_type, resource_id, updated_at DESC)`;
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS tools (
     id TEXT PRIMARY KEY,
@@ -487,6 +508,8 @@ const SCHEMA_STATEMENTS = [
      ON tools (featured, updated_at DESC, created_at DESC, id DESC)`,
   "DROP INDEX IF EXISTS idx_tools_category",
   "DROP INDEX IF EXISTS idx_tools_featured",
+  TELEGRAM_MESSAGE_TABLE_STATEMENT,
+  TELEGRAM_MESSAGE_INDEX_STATEMENT,
   `CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -743,7 +766,15 @@ type ApiErrorCode =
   | "TURNSTILE_CONFIG_ERROR"
   | "TURNSTILE_REQUIRED"
   | "TURNSTILE_FAILED"
-  | "TURNSTILE_UNAVAILABLE";
+  | "TURNSTILE_UNAVAILABLE"
+  | "TELEGRAM_NOT_CONFIGURED"
+  | "TELEGRAM_DISABLED"
+  | "TELEGRAM_PERMISSION_DENIED"
+  | "TELEGRAM_MESSAGE_NOT_FOUND"
+  | "TELEGRAM_MESSAGE_EXISTS"
+  | "TELEGRAM_TARGET_CHANGED"
+  | "TELEGRAM_MESSAGE_TOO_LONG"
+  | "TELEGRAM_UNAVAILABLE";
 
 type ApiErrorPayload = {
   error: string;
@@ -1016,7 +1047,7 @@ export class InvalidRequestError extends Error {
   }
 }
 
-class UpstreamServiceError extends Error {
+export class UpstreamServiceError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "UpstreamServiceError";
@@ -1333,6 +1364,7 @@ async function initializeDatabaseSchema(db: D1Database) {
   await db.batch(SCHEMA_STATEMENTS.map((statement) => db.prepare(statement)));
   await ensureToolColumns(db);
   await ensureArticleColumns(db);
+  await ensureTelegramMessageSchema(db);
   await removeLegacySourceUpdateColumns(db);
   await db.prepare(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_articles_content_item_id
@@ -1629,6 +1661,77 @@ async function removeLegacySourceUpdateColumns(db: D1Database) {
   if (statements.length) {
     await db.batch(statements);
   }
+}
+
+export async function ensureTelegramMessageSchema(db: D1Database) {
+  if (initializedTelegramMessageDatabases.has(db)) return;
+
+  const existingPromise = telegramMessageInitializationPromises.get(db);
+  if (existingPromise) return existingPromise;
+
+  const initializationPromise = initializeTelegramMessageSchema(db);
+  telegramMessageInitializationPromises.set(db, initializationPromise);
+
+  try {
+    await initializationPromise;
+    initializedTelegramMessageDatabases.add(db);
+  } finally {
+    telegramMessageInitializationPromises.delete(db);
+  }
+}
+
+async function initializeTelegramMessageSchema(db: D1Database) {
+  await db.batch([
+    db.prepare(TELEGRAM_MESSAGE_TABLE_STATEMENT),
+    db.prepare(TELEGRAM_MESSAGE_INDEX_STATEMENT)
+  ]);
+
+  const legacyTable = await db.prepare(
+    `SELECT name FROM sqlite_master
+     WHERE type = 'table' AND name = 'telegram_tool_messages'`
+  ).first<{ name: string }>();
+  if (!legacyTable) return;
+
+  const legacyColumns = await db
+    .prepare("PRAGMA table_info(telegram_tool_messages)")
+    .all<{ name: string }>();
+  const columns = new Set(legacyColumns.results.map((column) => column.name));
+  if (!columns.has("tool_id")) {
+    throw new Error("Legacy Telegram message records cannot be migrated.");
+  }
+
+  const targetRef = columns.has("target_ref") ? "target_ref" : "''";
+  const mediaEnabled = columns.has("media_enabled")
+    ? "media_enabled"
+    : columns.has("link_preview_enabled")
+      ? "link_preview_enabled"
+      : "0";
+  const mediaUrl = columns.has("media_url") ? "media_url" : "''";
+  const pushedHash = columns.has("last_pushed_hash") ? "last_pushed_hash" : "''";
+
+  await db.prepare(
+    `INSERT OR IGNORE INTO telegram_messages (
+       id, resource_type, resource_id, chat_id, target_ref, message_id,
+       message_markdown, media_enabled, media_url, last_pushed_hash,
+       sent_at, updated_at
+     )
+     SELECT id, 'tool', tool_id, chat_id, ${targetRef}, message_id,
+            message_markdown, ${mediaEnabled}, ${mediaUrl}, ${pushedHash},
+            sent_at, updated_at
+     FROM telegram_tool_messages`
+  ).run();
+
+  const missing = await db.prepare(
+    `SELECT COUNT(*) AS total
+     FROM telegram_tool_messages AS legacy
+     LEFT JOIN telegram_messages AS current ON current.id = legacy.id
+     WHERE current.id IS NULL`
+  ).first<{ total: number }>();
+  if (Number(missing?.total ?? 0) > 0) {
+    throw new Error("Legacy Telegram message records were not fully migrated.");
+  }
+
+  await db.prepare("DROP TABLE telegram_tool_messages").run();
 }
 
 async function fetchFeedText(initialUrl: string) {

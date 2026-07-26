@@ -23,6 +23,25 @@ CREATE INDEX IF NOT EXISTS idx_tools_featured_latest_sort
 DROP INDEX IF EXISTS idx_tools_category;
 DROP INDEX IF EXISTS idx_tools_featured;
 
+CREATE TABLE IF NOT EXISTS telegram_messages (
+  id TEXT PRIMARY KEY,
+  resource_type TEXT NOT NULL CHECK (resource_type IN ('tool', 'article')),
+  resource_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  target_ref TEXT NOT NULL DEFAULT '',
+  message_id TEXT NOT NULL,
+  message_markdown TEXT NOT NULL DEFAULT '',
+  media_enabled INTEGER NOT NULL DEFAULT 0,
+  media_url TEXT NOT NULL DEFAULT '',
+  last_pushed_hash TEXT NOT NULL DEFAULT '',
+  sent_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(resource_type, resource_id, chat_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_messages_resource
+  ON telegram_messages (resource_type, resource_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
@@ -277,7 +296,7 @@ FROM content_items
 JOIN content_sources ON content_sources.id = content_items.source_id;
 
 INSERT INTO app_settings (key, value, updated_at)
-VALUES ('database_schema_version', '10', CURRENT_TIMESTAMP)
+VALUES ('database_schema_version', '11', CURRENT_TIMESTAMP)
 ON CONFLICT(key) DO UPDATE SET
   value = excluded.value,
   updated_at = CURRENT_TIMESTAMP;

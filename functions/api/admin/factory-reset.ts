@@ -1,5 +1,6 @@
 import {
   getDatabase,
+  ensureTelegramMessageSchema,
   invalidatePublicApiCache,
   json,
   jsonError,
@@ -18,6 +19,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
   try {
     const db = await getDatabase(env);
+    await ensureTelegramMessageSchema(db);
     const [toolCount, articleCount, contentSourceCount, contentItemCount] =
       await db.batch([
         db.prepare("SELECT COUNT(*) AS total FROM tools"),
@@ -36,6 +38,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       counts.tools + counts.articles + counts.contentSources + counts.contentItems;
 
     await db.batch([
+      db.prepare("DELETE FROM telegram_messages"),
       db.prepare("DELETE FROM content_items"),
       db.prepare("DELETE FROM content_sources"),
       db.prepare("DELETE FROM articles"),

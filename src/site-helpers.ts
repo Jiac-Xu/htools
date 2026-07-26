@@ -945,6 +945,30 @@ export function getLocalizedErrorMessage(
       : "Verification failed. Please try again.",
     TURNSTILE_REQUIRED: t.admin.turnstileRequired,
     TURNSTILE_UNAVAILABLE: t.admin.turnstileServerFailed,
+    TELEGRAM_NOT_CONFIGURED: isChinese
+      ? "Telegram 环境变量尚未完整配置。"
+      : "Telegram environment variables are not configured.",
+    TELEGRAM_DISABLED: isChinese
+      ? "Telegram 推送尚未开启。"
+      : "Telegram pushing is disabled.",
+    TELEGRAM_PERMISSION_DENIED: isChinese
+      ? "机器人没有向目标会话发送或编辑消息的权限，请先调整 Telegram 权限后重试。"
+      : "The bot cannot send or edit messages in the target chat. Update its Telegram permissions and try again.",
+    TELEGRAM_MESSAGE_NOT_FOUND: isChinese
+      ? "原 Telegram 消息已不存在，可清除旧消息记录后手动重新推送。"
+      : "The original Telegram message no longer exists. Clear its old record and push it manually again.",
+    TELEGRAM_MESSAGE_EXISTS: isChinese
+      ? "此内容已经推送到当前 Telegram 会话。"
+      : "This content has already been pushed to the current Telegram chat.",
+    TELEGRAM_TARGET_CHANGED: isChinese
+      ? "Telegram 发送目标已经改变，请重新建立推送后再发送。"
+      : "The Telegram target has changed. Rebuild the push before sending it again.",
+    TELEGRAM_MESSAGE_TOO_LONG: isChinese
+      ? "完整消息超过 Telegram 的 32768 字符限制。"
+      : "The complete message exceeds Telegram's 32768-character limit.",
+    TELEGRAM_UNAVAILABLE: isChinese
+      ? "Telegram 服务请求失败，请检查机器人配置或稍后重试。"
+      : "The Telegram request failed. Check the bot configuration or try again later.",
   };
 
   if (businessCodeMessages[errorCode]) return businessCodeMessages[errorCode];

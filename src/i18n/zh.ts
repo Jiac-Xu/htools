@@ -85,9 +85,12 @@ export const zh: Messages = {
     demo: "演示",
     viewDetails: "查看详情",
     close: "关闭",
+    confirm: "确认",
     home: "首页",
     backHome: "返回首页",
+    add: "添加",
     addTool: "添加工具",
+    sort: "排序",
     submit: "提交",
     saveSettings: "保存设置",
     copy: "复制",
@@ -115,7 +118,7 @@ export const zh: Messages = {
     description: "换个分类，或者试试更短的搜索词。"
   },
   footer: {
-    version: "HTools v1.0.13"
+    version: "HTools v1.0.15"
   },
   submit: {
     title: "提交工具",
@@ -170,6 +173,26 @@ export const zh: Messages = {
   tool: {
     featured: "精选",
     previewAlt: (name) => `${name} 网站预览`
+  },
+  markdownEditor: {
+    modeLabel: "编辑方式",
+    modes: {
+      edit: "编辑内容",
+      preview: "浏览内容"
+    },
+    toolbarLabel: "Markdown 格式",
+    preview: "内容预览",
+    previewEmpty: "暂无可预览的内容。",
+    actions: {
+      heading: "标题",
+      bold: "粗体",
+      italic: "斜体",
+      quote: "引用",
+      list: "列表",
+      code: "代码",
+      table: "表格",
+      link: "链接"
+    }
   },
   admin: {
     dashboard: "控制台",
@@ -259,6 +282,7 @@ export const zh: Messages = {
     tagsPlaceholder: "数据库, 认证, AI",
     githubMetadata: "GitHub 信息",
     featuredTool: "精选工具",
+    regularTool: "普通工具",
     saveTool: "保存工具"
   },
   githubSettings: {
@@ -284,13 +308,24 @@ export const zh: Messages = {
     deleteConfirmTitle: "确定要删除吗？",
     deleteConfirmDescription: "此操作无法撤销。这将从服务器中永久删除这个工具。",
     deleteCancel: "取消",
-    deleteContinue: "继续",
     toolDeleted: "工具已删除。",
     deleteFailed: "删除失败。",
     featuredEnabled: "已设为精选工具。",
     featuredDisabled: "已取消精选工具。",
+    featuredConfirmTitle: (nextFeatured) =>
+      nextFeatured ? "将工具设为精选吗？" : "取消工具精选吗？",
+    featuredConfirmDescription: (nextFeatured) =>
+      nextFeatured
+        ? "确认后，这个工具会显示在精选分类中。"
+        : "确认后，这个工具会从精选分类中移除。",
     featuredDraftEnabled: "已标记为精选，保存工具后生效。",
     featuredDraftDisabled: "已取消精选标记，保存工具后生效。",
+    publishedConfirmTitle: (nextPublished) =>
+      nextPublished ? "发布这篇文章吗？" : "将文章改为草稿吗？",
+    publishedConfirmDescription: (nextPublished) =>
+      nextPublished
+        ? "发布后，访客可以在文章页看到这篇文章。"
+        : "改为草稿后，这篇文章将不再公开显示。",
     githubMetadataApplied: "已读取 GitHub 仓库信息。",
   },
   errors: {

@@ -75,7 +75,7 @@ export function getArticleText(locale: Locale) {
       contentLabel: "正文 Markdown",
       contentPlaceholder: "支持常用 Markdown：标题、列表、引用、代码块和链接。",
       coverImageLabel: "封面图 URL",
-      coverImagePlaceholder: "可选，填写 http/https 图片地址。",
+      coverImagePlaceholder: "https://example.com/preview.png",
       categoryLabel: "分类",
       categoryPlaceholder: "选择或新建分类",
       categoryEmptyLabel: "选择分类",
@@ -88,7 +88,7 @@ export function getArticleText(locale: Locale) {
       publishTimeLabel: "发布时间",
       publishTimeHelp:
         "不填写则使用当前时间；填写后会按该时间显示和排序。",
-      draftLabel: "保存为草稿",
+      draftLabel: "存为草稿",
       statusPublished: "已发布",
       statusDraft: "草稿",
       saveArticle: "保存文章",
@@ -142,7 +142,7 @@ export function getArticleText(locale: Locale) {
     contentPlaceholder:
       "Supports common Markdown: headings, lists, quotes, code blocks, and links.",
     coverImageLabel: "Cover image URL",
-    coverImagePlaceholder: "Optional http/https image URL.",
+    coverImagePlaceholder: "https://example.com/preview.png",
     categoryLabel: "Category",
     categoryPlaceholder: "Select or create a category",
     categoryEmptyLabel: "Select category",
@@ -155,7 +155,7 @@ export function getArticleText(locale: Locale) {
     publishTimeLabel: "Publish time",
     publishTimeHelp:
       "Leave blank to use the current time. Fill it to display and sort by that time.",
-    draftLabel: "Save as draft",
+    draftLabel: "Save draft",
     statusPublished: "Published",
     statusDraft: "Draft",
     saveArticle: "Save Article",

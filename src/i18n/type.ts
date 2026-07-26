@@ -90,9 +90,12 @@ export type Messages = {
     demo: string;
     viewDetails: string;
     close: string;
+    confirm: string;
     home: string;
     backHome: string;
+    add: string;
     addTool: string;
+    sort: string;
     submit: string;
     saveSettings: string;
     copy: string;
@@ -167,6 +170,26 @@ export type Messages = {
   tool: {
     featured: string;
     previewAlt: (name: string) => string;
+  };
+  markdownEditor: {
+    modeLabel: string;
+    modes: {
+      edit: string;
+      preview: string;
+    };
+    toolbarLabel: string;
+    preview: string;
+    previewEmpty: string;
+    actions: {
+      heading: string;
+      bold: string;
+      italic: string;
+      quote: string;
+      list: string;
+      code: string;
+      table: string;
+      link: string;
+    };
   };
   admin: {
     dashboard: string;
@@ -256,6 +279,7 @@ export type Messages = {
     tagsPlaceholder: string;
     githubMetadata: string;
     featuredTool: string;
+    regularTool: string;
     saveTool: string;
   };
   githubSettings: {
@@ -281,13 +305,16 @@ export type Messages = {
     deleteConfirmTitle: string;
     deleteConfirmDescription: string;
     deleteCancel: string;
-    deleteContinue: string;
     toolDeleted: string;
     deleteFailed: string;
     featuredEnabled: string;
     featuredDisabled: string;
+    featuredConfirmTitle: (nextFeatured: boolean) => string;
+    featuredConfirmDescription: (nextFeatured: boolean) => string;
     featuredDraftEnabled: string;
     featuredDraftDisabled: string;
+    publishedConfirmTitle: (nextPublished: boolean) => string;
+    publishedConfirmDescription: (nextPublished: boolean) => string;
     githubMetadataApplied: string;
   };
   errors: {

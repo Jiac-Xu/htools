@@ -93,9 +93,12 @@ export const en: Messages = {
     demo: "Demo",
     viewDetails: "View details",
     close: "Close",
+    confirm: "Confirm",
     home: "Home",
     backHome: "Back Home",
+    add: "Add",
     addTool: "Add Tool",
+    sort: "Sort",
     submit: "Submit",
     saveSettings: "Save Settings",
     copy: "Copy",
@@ -123,7 +126,7 @@ export const en: Messages = {
     description: "Try another category or a shorter search term."
   },
   footer: {
-    version: "HTools v1.0.13"
+    version: "HTools v1.0.15"
   },
   submit: {
     title: "Submit Tool",
@@ -180,6 +183,26 @@ export const en: Messages = {
   tool: {
     featured: "Featured",
     previewAlt: (name) => `${name} website preview`
+  },
+  markdownEditor: {
+    modeLabel: "Editing mode",
+    modes: {
+      edit: "Edit content",
+      preview: "View content"
+    },
+    toolbarLabel: "Markdown formatting",
+    preview: "Content preview",
+    previewEmpty: "There is no content to preview.",
+    actions: {
+      heading: "Heading",
+      bold: "Bold",
+      italic: "Italic",
+      quote: "Quote",
+      list: "List",
+      code: "Code",
+      table: "Table",
+      link: "Link"
+    }
   },
   admin: {
     dashboard: "Dashboard",
@@ -272,6 +295,7 @@ export const en: Messages = {
     tagsPlaceholder: "Database, Auth, AI",
     githubMetadata: "GitHub Info",
     featuredTool: "Featured tool",
+    regularTool: "Regular tool",
     saveTool: "Save Tool"
   },
   githubSettings: {
@@ -298,13 +322,24 @@ export const en: Messages = {
     deleteConfirmDescription:
       "This action cannot be undone. This will permanently delete the tool from the server.",
     deleteCancel: "Cancel",
-    deleteContinue: "Continue",
     toolDeleted: "Tool deleted.",
     deleteFailed: "Delete failed.",
     featuredEnabled: "Marked as featured.",
     featuredDisabled: "Featured mark removed.",
+    featuredConfirmTitle: (nextFeatured) =>
+      nextFeatured ? "Mark this tool as featured?" : "Remove this tool from featured?",
+    featuredConfirmDescription: (nextFeatured) =>
+      nextFeatured
+        ? "This tool will appear in the featured category."
+        : "This tool will be removed from the featured category.",
     featuredDraftEnabled: "Marked as featured. Save the tool to apply it.",
     featuredDraftDisabled: "Featured mark removed. Save the tool to apply it.",
+    publishedConfirmTitle: (nextPublished) =>
+      nextPublished ? "Publish this article?" : "Move this article to draft?",
+    publishedConfirmDescription: (nextPublished) =>
+      nextPublished
+        ? "Visitors will be able to view this article after it is published."
+        : "This article will no longer be publicly visible as a draft.",
     githubMetadataApplied: "GitHub repository info loaded.",
   },
   errors: {

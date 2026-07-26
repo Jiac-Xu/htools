@@ -300,7 +300,9 @@ function resolveThemeMode(mode: ThemeMode) {
 }
 
 function resolveStoredThemeMode(value?: string | null): ThemeMode {
-  return value === "dark" || value === "system" ? value : "light";
+  return value === "light" || value === "dark" || value === "system"
+    ? value
+    : "system";
 }
 
 function createArticleHref(slug: string) {
@@ -370,6 +372,10 @@ export function App() {
   const [proxySettings, setProxySettings] = useState<ProxySettings>(
     DEFAULT_PROXY_SETTINGS
   );
+  const [proxySettingsRequestSettled, setProxySettingsRequestSettled] =
+    useState(false);
+  const [proxySettingsRequestError, setProxySettingsRequestError] =
+    useState<unknown>(null);
   const [publicCategorySettings, setPublicCategorySettings] =
     useState<AdminCategorySettings>(initialAdminCategorySettings);
   const [siteSettings, setSiteSettings] = useState<SiteSettings>(
@@ -378,6 +384,10 @@ export function App() {
   const [siteSettingsLoaded, setSiteSettingsLoaded] = useState(
     Boolean(cachedSiteSettings)
   );
+  const [siteSettingsRequestSettled, setSiteSettingsRequestSettled] =
+    useState(false);
+  const [siteSettingsRequestError, setSiteSettingsRequestError] =
+    useState<unknown>(null);
   const [umamiSettings, setUmamiSettings] = useState<UmamiSettings>(
     DISABLED_UMAMI_SETTINGS
   );
@@ -611,6 +621,8 @@ export function App() {
 
   useEffect(() => {
     let active = true;
+    setSiteSettingsRequestSettled(false);
+    setSiteSettingsRequestError(null);
 
     async function refreshSiteSettings() {
       try {
@@ -636,14 +648,18 @@ export function App() {
             });
           }
           setSiteSettingsLoaded(true);
+          setSiteSettingsRequestError(null);
+          setSiteSettingsRequestSettled(true);
         }
-      } catch {
+      } catch (error) {
         if (active) {
           setUmamiSettings(DISABLED_UMAMI_SETTINGS);
           if (!cachedSiteSettings) {
             setSiteSettings(DEFAULT_SITE_SETTINGS);
           }
           setSiteSettingsLoaded(true);
+          setSiteSettingsRequestError(error);
+          setSiteSettingsRequestSettled(true);
         }
       }
     }
@@ -683,6 +699,8 @@ export function App() {
 
   useEffect(() => {
     let active = true;
+    setProxySettingsRequestSettled(false);
+    setProxySettingsRequestError(null);
 
     async function refreshProxySettings() {
       try {
@@ -695,10 +713,14 @@ export function App() {
             mode: normalizeProxyMode(settings.mode),
             scope: normalizeProxyScope(settings.scope)
           });
+          setProxySettingsRequestError(null);
+          setProxySettingsRequestSettled(true);
         }
-      } catch {
+      } catch (error) {
         if (active) {
           setProxySettings(DEFAULT_PROXY_SETTINGS);
+          setProxySettingsRequestError(error);
+          setProxySettingsRequestSettled(true);
         }
       }
     }
@@ -1011,7 +1033,15 @@ export function App() {
   );
   function updateSiteSettings(settings: SiteSettings) {
     setSiteSettings(settings);
+    setSiteSettingsRequestError(null);
+    setSiteSettingsRequestSettled(true);
     writeCachedSiteSettings(settings);
+  }
+
+  function updateProxySettings(settings: ProxySettings) {
+    setProxySettings(settings);
+    setProxySettingsRequestError(null);
+    setProxySettingsRequestSettled(true);
   }
 
   const page = isAdminRoute ? (
@@ -1023,12 +1053,16 @@ export function App() {
         onBackHome={() => (window.location.href = "/")}
         onLocaleChange={setLocale}
         onNotify={notify}
-        onProxySettingsChange={setProxySettings}
+        onProxySettingsChange={updateProxySettings}
         onSiteSettingsChange={updateSiteSettings}
         onUmamiSettingsChange={setUmamiSettings}
         onThemeChange={setThemeMode}
         proxySettings={proxySettings}
+        proxySettingsLoadError={proxySettingsRequestError}
+        proxySettingsReady={proxySettingsRequestSettled}
         siteSettings={siteSettings}
+        siteSettingsLoadError={siteSettingsRequestError}
+        siteSettingsReady={siteSettingsRequestSettled}
         t={t}
         themeMode={themeMode}
       />

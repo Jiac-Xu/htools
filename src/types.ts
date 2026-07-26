@@ -249,6 +249,32 @@ export type TurnstileSettings = {
   enabled: boolean;
 };
 
+export type TelegramSettings = {
+  available: boolean;
+  enabled: boolean;
+  footerMarkdown: string;
+};
+
+export type TelegramConnection = {
+  botName: string;
+  botUsername: string;
+  chatId: string;
+  chatTitle: string;
+  chatType: string;
+  canSend: boolean;
+};
+
+export type TelegramMessage = {
+  exists: boolean;
+  targetChanged: boolean;
+  syncStatus: "not_pushed" | "pending" | "synced";
+  bodyMarkdown: string;
+  mediaEnabled: boolean;
+  mediaUrl: string;
+  defaultBodyMarkdown: string;
+  defaultMediaUrl: string;
+};
+
 export type HomeHeroContent = {
   titleTop: string;
   titleBottom: string;

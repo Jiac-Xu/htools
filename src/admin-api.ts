@@ -28,6 +28,9 @@ import type {
   SiteSettingsPatch,
   SourceSettings,
   TurnstileSettings,
+  TelegramConnection,
+  TelegramSettings,
+  TelegramMessage,
   UmamiSettings,
   Tool,
   ToolSourceItem,
@@ -127,6 +130,18 @@ type SiteSettingsResponse = {
 type AdminSecuritySettingsResponse = {
   settings: AdminSecuritySettings;
   token?: string;
+};
+
+type TelegramSettingsResponse = {
+  settings: TelegramSettings;
+};
+
+type TelegramConnectionResponse = {
+  connection: TelegramConnection;
+};
+
+type TelegramMessageResponse = {
+  message: TelegramMessage;
 };
 
 type AdminCategorySettingsResponse = {
@@ -766,6 +781,148 @@ export async function updateAdminPassword(
     throw new Error("Updated admin session token is missing.");
   }
   return { settings: data.settings, token: data.token };
+}
+
+export async function loadTelegramSettings(
+  token: string,
+  options: { signal?: AbortSignal } = {}
+): Promise<TelegramSettings> {
+  const data = await requestJsonWithTimeout<TelegramSettingsResponse>(
+    "/api/admin/telegram-settings",
+    {
+      signal: options.signal,
+      headers: { Accept: "application/json", Authorization: `Bearer ${token}` }
+    }
+  );
+  return data.settings;
+}
+
+export async function saveTelegramSettings(
+  input: Pick<TelegramSettings, "enabled" | "footerMarkdown">,
+  token: string
+) {
+  const response = await fetch("/api/admin/telegram-settings", {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  return (await readJson<TelegramSettingsResponse>(response)).settings;
+}
+
+export async function testTelegramSettings(token: string) {
+  const response = await fetch("/api/admin/telegram-settings/test", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return (await readJson<TelegramConnectionResponse>(response)).connection;
+}
+
+export async function loadTelegramMessage(
+  resourceType: "tool" | "article",
+  resourceId: string,
+  token: string,
+  locale: "zh" | "en"
+) {
+  const response = await fetch(
+    `/api/admin/telegram-messages/${resourceType}/${encodeURIComponent(resourceId)}?locale=${locale}`,
+    { headers: { Accept: "application/json", Authorization: `Bearer ${token}` } }
+  );
+  return (await readJson<TelegramMessageResponse>(response)).message;
+}
+
+export async function sendTelegramMessage(
+  resourceType: "tool" | "article",
+  resourceId: string,
+  bodyMarkdown: string,
+  mediaEnabled: boolean,
+  mediaUrl: string,
+  locale: "zh" | "en",
+  token: string
+) {
+  const response = await fetch(
+    `/api/admin/telegram-messages/${resourceType}/${encodeURIComponent(resourceId)}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ bodyMarkdown, mediaEnabled, mediaUrl, locale })
+    }
+  );
+  return (await readJson<TelegramMessageResponse>(response)).message;
+}
+
+export async function updateTelegramMessage(
+  resourceType: "tool" | "article",
+  resourceId: string,
+  bodyMarkdown: string,
+  mediaEnabled: boolean,
+  mediaUrl: string,
+  locale: "zh" | "en",
+  token: string
+) {
+  const response = await fetch(
+    `/api/admin/telegram-messages/${resourceType}/${encodeURIComponent(resourceId)}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ bodyMarkdown, mediaEnabled, mediaUrl, locale })
+    }
+  );
+  return (await readJson<TelegramMessageResponse>(response)).message;
+}
+
+export async function recoverTelegramMessage(
+  resourceType: "tool" | "article",
+  resourceId: string,
+  bodyMarkdown: string,
+  mediaEnabled: boolean,
+  mediaUrl: string,
+  locale: "zh" | "en",
+  token: string
+) {
+  const response = await fetch(
+    `/api/admin/telegram-messages/${resourceType}/${encodeURIComponent(resourceId)}/recover?locale=${locale}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ bodyMarkdown, mediaEnabled, mediaUrl })
+    }
+  );
+  return (await readJson<TelegramMessageResponse>(response)).message;
+}
+
+export async function saveTelegramMessage(
+  resourceType: "tool" | "article",
+  resourceId: string,
+  bodyMarkdown: string,
+  mediaEnabled: boolean,
+  mediaUrl: string,
+  locale: "zh" | "en",
+  token: string
+) {
+  const response = await fetch(
+    `/api/admin/telegram-messages/${resourceType}/${encodeURIComponent(resourceId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ bodyMarkdown, mediaEnabled, mediaUrl, locale })
+    }
+  );
+  return (await readJson<TelegramMessageResponse>(response)).message;
 }
 
 export async function loadGitHubSettings(

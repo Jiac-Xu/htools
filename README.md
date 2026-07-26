@@ -68,10 +68,14 @@ D1 数据库：选择你刚创建的数据库
 | `GITHUB_TOKEN` | 否 | Secret | 后台添加或编辑工具时读取公开 GitHub 仓库信息，并提高 GitHub API 请求限额。 |
 | `TURNSTILE_SITE_KEY` | 否，需与私密密钥同时配置 | 普通变量 | Cloudflare Turnstile 站点密钥，供管理员登录页加载验证组件。 |
 | `TURNSTILE_SECRET_KEY` | 否，需与站点密钥同时配置 | Secret | Cloudflare Turnstile 私密密钥，供服务端验证人机验证结果。 |
+| `TGTOKEN` | 否，需与 `TGID` 同时配置 | Secret | 用于管理员手动推送工具或文章内容的 Telegram Bot Token。 |
+| `TGID` | 否，需与 `TGTOKEN` 同时配置 | 普通变量 | Telegram 接收目标；支持个人、私密群组、超级群组或频道数字 ID，也支持公开频道用户名。 |
 
 `GITHUB_TOKEN` 建议使用不含仓库写入、删除或管理权限的只读 Token。未配置时，后台改由管理员浏览器请求 GitHub 公开 API；前端提交页始终由访客浏览器直接请求，不会使用站点 Token。
 
 使用 Turnstile 时，需在 Cloudflare 添加部署域名并同时配置两个密钥，重新部署后在后台“服务设置”中开启。
+
+使用 Telegram 推送时，请先将机器人加入目标会话并授予发送消息权限；配置 `TGTOKEN` 和 `TGID` 后，重新部署并在后台“服务设置”中测试连接、设置固定 Markdown 消息尾巴并开启。工具和文章只会由管理员从对应卡片手动推送，新增、编辑、导入或同步内容不会自动发送。推送使用 Telegram Rich Messages，支持标题、引用、列表、表格等 Rich Markdown；系统会预填工具预览图或文章封面，但图片发送默认关闭，文章没有封面时不会生成替代截图。点击“保存”只保存当前内容，点击“推送”或“更新”才会创建或修改 Telegram 消息。若原消息已被删除，可保留正文和图片并重新建立推送；权限不足时调整机器人权限后重试。
 
 ## 本地开发
 
