@@ -1,5 +1,10 @@
 class ApiClientError extends Error {
-  constructor(message: string, readonly status: number, readonly code?: string) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly recordId?: string
+  ) {
     super(message);
     this.name = "ApiClientError";
   }
@@ -43,7 +48,14 @@ export async function readJson<T>(response: Response): Promise<T> {
       typeof payload.code === "string"
         ? payload.code
         : undefined;
-    throw new ApiClientError(message, response.status, code);
+    const recordId =
+      typeof payload === "object" &&
+      payload !== null &&
+      "recordId" in payload &&
+      typeof payload.recordId === "string"
+        ? payload.recordId
+        : undefined;
+    throw new ApiClientError(message, response.status, code, recordId);
   }
 
   return payload as T;

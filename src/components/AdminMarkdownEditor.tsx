@@ -12,6 +12,7 @@ import type { ProxySettings } from "../types";
 import MarkdownContent from "./MarkdownContent";
 
 export default function AdminMarkdownEditor({
+  actions = MARKDOWN_EDITOR_ACTIONS,
   className = "",
   disabled = false,
   headingAside,
@@ -33,6 +34,7 @@ export default function AdminMarkdownEditor({
   textareaClassName = "",
   value
 }: {
+  actions?: ReadonlyArray<(typeof MARKDOWN_EDITOR_ACTIONS)[number]>;
   className?: string;
   disabled?: boolean;
   headingAside?: ReactNode;
@@ -160,7 +162,7 @@ export default function AdminMarkdownEditor({
             className="admin-markdown-toolbar"
             role="toolbar"
           >
-            {MARKDOWN_EDITOR_ACTIONS.map((action) => {
+            {actions.map((action) => {
               const actionLabel = text.actions[action];
               return (
                 <button

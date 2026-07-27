@@ -466,11 +466,18 @@ const initializedTelegramMessageDatabases = new WeakSet<D1Database>();
 const telegramMessageInitializationPromises = new WeakMap<D1Database, Promise<void>>();
 const DATABASE_SCHEMA_VERSION_KEY = "database_schema_version";
 // Increment this whenever SCHEMA_STATEMENTS or compatibility column upgrades change.
-const DATABASE_SCHEMA_VERSION = 11;
-const TELEGRAM_MESSAGE_TABLE_STATEMENT = `CREATE TABLE IF NOT EXISTS telegram_messages (
+const DATABASE_SCHEMA_VERSION = 12;
+const TELEGRAM_MESSAGE_COLUMNS = `id, resource_type, resource_id, custom_title,
+  chat_id, target_ref, message_id, message_markdown, media_enabled, media_url,
+  last_pushed_hash, sent_at, updated_at`;
+const TELEGRAM_MESSAGE_MIGRATION_TABLE = "telegram_messages_migrate";
+
+function createTelegramMessageTableStatement(table: string) {
+  return `CREATE TABLE IF NOT EXISTS ${table} (
   id TEXT PRIMARY KEY,
-  resource_type TEXT NOT NULL CHECK (resource_type IN ('tool', 'article')),
+  resource_type TEXT NOT NULL CHECK (resource_type IN ('tool', 'article', 'custom')),
   resource_id TEXT NOT NULL,
+  custom_title TEXT NOT NULL DEFAULT '',
   chat_id TEXT NOT NULL,
   target_ref TEXT NOT NULL DEFAULT '',
   message_id TEXT NOT NULL,
@@ -482,6 +489,10 @@ const TELEGRAM_MESSAGE_TABLE_STATEMENT = `CREATE TABLE IF NOT EXISTS telegram_me
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(resource_type, resource_id, chat_id)
 )`;
+}
+
+const TELEGRAM_MESSAGE_TABLE_STATEMENT =
+  createTelegramMessageTableStatement("telegram_messages");
 const TELEGRAM_MESSAGE_INDEX_STATEMENT = `CREATE INDEX IF NOT EXISTS idx_telegram_messages_resource
   ON telegram_messages (resource_type, resource_id, updated_at DESC)`;
 const SCHEMA_STATEMENTS = [
@@ -774,7 +785,8 @@ type ApiErrorCode =
   | "TELEGRAM_MESSAGE_EXISTS"
   | "TELEGRAM_TARGET_CHANGED"
   | "TELEGRAM_MESSAGE_TOO_LONG"
-  | "TELEGRAM_UNAVAILABLE";
+  | "TELEGRAM_UNAVAILABLE"
+  | "BACKUP_DATA_INVALID";
 
 type ApiErrorPayload = {
   error: string;
@@ -838,10 +850,6 @@ export function jsonError(
   details: Omit<ApiErrorPayload, "error" | "code"> = {}
 ) {
   return json({ error, code, ...details }, init);
-}
-
-export function jsonActionSuccess(init: ResponseInit = {}) {
-  return json({ success: true } satisfies ApiActionSuccess, init);
 }
 
 export function jsonDeleted(
@@ -1638,6 +1646,35 @@ async function ensureArticleColumns(db: D1Database) {
   if (statements.length) {
     await db.batch(statements);
   }
+
+  await backfillArticleContentItemLinks(db);
+}
+
+async function backfillArticleContentItemLinks(db: D1Database) {
+  await db.prepare(
+    `UPDATE articles
+     SET content_item_id = (
+       SELECT ci.id FROM content_items AS ci
+       WHERE ci.article_id = articles.id
+       ORDER BY ci.id
+       LIMIT 1
+     )
+     WHERE content_item_id IS NULL
+       AND EXISTS (
+         SELECT 1 FROM content_items AS ci WHERE ci.article_id = articles.id
+       )`
+  ).run();
+
+  await db.prepare(
+    `UPDATE content_items
+     SET article_id = NULL
+     WHERE article_id IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM articles AS a
+         WHERE a.id = content_items.article_id
+           AND a.content_item_id = content_items.id
+       )`
+  ).run();
 }
 
 async function removeLegacySourceUpdateColumns(db: D1Database) {
@@ -1685,6 +1722,7 @@ async function initializeTelegramMessageSchema(db: D1Database) {
     db.prepare(TELEGRAM_MESSAGE_TABLE_STATEMENT),
     db.prepare(TELEGRAM_MESSAGE_INDEX_STATEMENT)
   ]);
+  await upgradeTelegramMessageTable(db);
 
   const legacyTable = await db.prepare(
     `SELECT name FROM sqlite_master
@@ -1732,6 +1770,37 @@ async function initializeTelegramMessageSchema(db: D1Database) {
   }
 
   await db.prepare("DROP TABLE telegram_tool_messages").run();
+}
+
+async function upgradeTelegramMessageTable(db: D1Database) {
+  const table = await db.prepare(
+    `SELECT sql FROM sqlite_master
+     WHERE type = 'table' AND name = 'telegram_messages'`
+  ).first<{ sql: string | null }>();
+  if (!table?.sql || table.sql.includes("'custom'")) return;
+
+  const existingColumns = await db
+    .prepare("PRAGMA table_info(telegram_messages)")
+    .all<{ name: string }>();
+  const columns = new Set(existingColumns.results.map((column) => column.name));
+  const customTitle = columns.has("custom_title") ? "custom_title" : "''";
+
+  await db.batch([
+    db.prepare(`DROP TABLE IF EXISTS ${TELEGRAM_MESSAGE_MIGRATION_TABLE}`),
+    db.prepare(createTelegramMessageTableStatement(TELEGRAM_MESSAGE_MIGRATION_TABLE)),
+    db.prepare(
+      `INSERT INTO ${TELEGRAM_MESSAGE_MIGRATION_TABLE} (${TELEGRAM_MESSAGE_COLUMNS})
+       SELECT id, resource_type, resource_id, ${customTitle},
+              chat_id, target_ref, message_id, message_markdown, media_enabled,
+              media_url, last_pushed_hash, sent_at, updated_at
+       FROM telegram_messages`
+    ),
+    db.prepare("DROP TABLE telegram_messages"),
+    db.prepare(
+      `ALTER TABLE ${TELEGRAM_MESSAGE_MIGRATION_TABLE} RENAME TO telegram_messages`
+    ),
+    db.prepare(TELEGRAM_MESSAGE_INDEX_STATEMENT)
+  ]);
 }
 
 async function fetchFeedText(initialUrl: string) {

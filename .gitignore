@@ -11,12 +11,14 @@ wrangler.local.toml
 # Local agent workspace
 .agents/
 .logs/
+.claude/settings.local.json
 scripts/
 tmp/
 tests/
 
 # Local private docs
 CHANGELOG.md
+CLAUDE.md
 DESIGN.md
 
 # Local secrets

@@ -60,7 +60,6 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
     const db = await getDatabase(env);
     const data = await readBackupData(db);
-    validateBackupIntegrity(data);
     const counts = createBackupCounts(data);
 
     return json({
@@ -71,6 +70,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       data
     });
   } catch (error) {
+    if (error instanceof BackupDataError) {
+      return jsonError(error.message, "BACKUP_DATA_INVALID", { status: 400 }, {
+        resource: error.resource,
+        recordId: error.recordId
+      });
+    }
     const message =
       error instanceof Error ? error.message : "Unable to export backup.";
     return jsonError(message, "SERVER_ERROR", { status: 500 });
@@ -88,6 +93,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     data = normalizeBackupPayload(await readLimitedJsonBody(request));
   } catch (error) {
+    if (error instanceof BackupDataError) {
+      return jsonError(error.message, "BACKUP_DATA_INVALID", { status: 400 }, {
+        resource: error.resource,
+        recordId: error.recordId
+      });
+    }
     const message =
       error instanceof Error ? error.message : "Backup file is invalid.";
     return badRequest(message);
@@ -104,6 +115,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       counts: createBackupCounts(data)
     });
   } catch (error) {
+    if (error instanceof BackupDataError) {
+      return jsonError(error.message, "BACKUP_DATA_INVALID", { status: 400 }, {
+        resource: error.resource,
+        recordId: error.recordId
+      });
+    }
     const message =
       error instanceof Error ? error.message : "Unable to restore backup.";
     return jsonError(message, "SERVER_ERROR", { status: 500 });
@@ -185,7 +202,7 @@ async function readBackupData(db: D1Database): Promise<BackupData> {
         .all<ContentItemRow>(),
       db
         .prepare(
-          `SELECT id, resource_type, resource_id, chat_id, target_ref,
+          `SELECT id, resource_type, resource_id, custom_title, chat_id, target_ref,
                   message_id, message_markdown,
                    media_enabled, media_url, last_pushed_hash, sent_at, updated_at
            FROM telegram_messages
@@ -253,16 +270,17 @@ async function restoreBackupData(db: D1Database, data: BackupData) {
       db
         .prepare(
           `INSERT INTO telegram_messages (
-             id, resource_type, resource_id, chat_id, target_ref,
+             id, resource_type, resource_id, custom_title, chat_id, target_ref,
              message_id, message_markdown,
              media_enabled, media_url, last_pushed_hash, sent_at, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           row.id,
           row.resource_type,
           row.resource_id,
+          row.custom_title,
           row.chat_id,
           row.target_ref,
           row.message_id,
@@ -395,8 +413,48 @@ function normalizeBackupPayload(payload: unknown): BackupData {
       .filter((row): row is AppSettingRow => Boolean(row))
   };
 
+  repairContentItemArticleLinks(normalized);
   validateBackupIntegrity(normalized);
   return normalized;
+}
+
+function repairContentItemArticleLinks(data: BackupData) {
+  const articlesById = new Map(data.articles.map((row) => [row.id, row]));
+  const claimed = new Set(
+    data.articles.map((row) => row.content_item_id).filter(Boolean) as string[]
+  );
+
+  for (const item of data.contentItems) {
+    if (!item.article_id) continue;
+    const article = articlesById.get(item.article_id);
+
+    if (!article) {
+      item.article_id = null;
+      continue;
+    }
+
+    if (article.content_item_id === item.id) continue;
+
+    if (!article.content_item_id && !claimed.has(item.id)) {
+      article.content_item_id = item.id;
+      claimed.add(item.id);
+      continue;
+    }
+
+    item.article_id = null;
+  }
+}
+
+class BackupDataError extends Error {
+  readonly resource: string;
+  readonly recordId: string;
+
+  constructor(message: string, resource: string, recordId: string) {
+    super(message);
+    this.name = "BackupDataError";
+    this.resource = resource;
+    this.recordId = recordId;
+  }
 }
 
 function validateBackupIntegrity(data: BackupData) {
@@ -429,18 +487,30 @@ function validateBackupIntegrity(data: BackupData) {
   const articlesById = new Map(data.articles.map((row) => [row.id, row]));
   for (const item of data.contentItems) {
     if (!sourceIds.has(item.source_id)) {
-      throw new Error(`content item ${item.id} references a missing content source.`);
+      throw new BackupDataError(
+        `content item ${item.id} references a missing content source.`,
+        "content item",
+        item.id
+      );
     }
 
     if (item.article_id) {
       const article = articlesById.get(item.article_id);
 
       if (!article) {
-        throw new Error(`content item ${item.id} references a missing article.`);
+        throw new BackupDataError(
+          `content item ${item.id} references a missing article.`,
+          "content item",
+          item.id
+        );
       }
 
       if (article.content_item_id !== item.id) {
-        throw new Error(`content item ${item.id} has an inconsistent article link.`);
+        throw new BackupDataError(
+          `content item ${item.id} has an inconsistent article link.`,
+          "content item",
+          item.id
+        );
       }
     }
   }
@@ -450,11 +520,19 @@ function validateBackupIntegrity(data: BackupData) {
       const item = contentItemsById.get(article.content_item_id);
 
       if (!item) {
-        throw new Error(`article ${article.id} references a missing content item.`);
+        throw new BackupDataError(
+          `article ${article.id} references a missing content item.`,
+          "article",
+          article.id
+        );
       }
 
       if (item.article_id !== article.id) {
-        throw new Error(`article ${article.id} has an inconsistent content item link.`);
+        throw new BackupDataError(
+          `article ${article.id} has an inconsistent content item link.`,
+          "article",
+          article.id
+        );
       }
     }
   }
@@ -471,7 +549,11 @@ function assertUnique<T>(
     const key = getKey(row);
 
     if (seen.has(key)) {
-      throw new Error(`backup contains a duplicate ${field}.`);
+      throw new BackupDataError(
+        `backup contains a duplicate ${field}.`,
+        field,
+        key
+      );
     }
 
     seen.add(key);
@@ -588,7 +670,11 @@ function normalizeTelegramMessageRow(
   const resourceId = readString(row.resource_id) || legacyToolId;
   const sentAt = readString(row.sent_at) || (messageId ? now : "");
 
-  if (resourceType !== "tool" && resourceType !== "article") {
+  if (
+    resourceType !== "tool" &&
+    resourceType !== "article" &&
+    resourceType !== "custom"
+  ) {
     throw new Error(`telegramMessages[${index}].resource_type is invalid.`);
   }
   if (!resourceId) {
@@ -602,6 +688,7 @@ function normalizeTelegramMessageRow(
     id: readRequiredString(row.id, `telegramMessages[${index}].id`),
     resource_type: resourceType,
     resource_id: resourceId,
+    custom_title: readString(row.custom_title),
     chat_id: chatId,
     target_ref: readString(row.target_ref),
     message_id: messageId,

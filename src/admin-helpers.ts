@@ -35,8 +35,8 @@ export type ThemeMode = "light" | "dark" | "system";
 export type AdminView =
   | "tools"
   | "articles"
-  | "content"
   | "push"
+  | "content"
   | "import-export"
   | "link-check"
   | "system";

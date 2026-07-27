@@ -233,7 +233,7 @@ export function getAdminMaintenanceText(locale: Locale) {
       proxyUpdated: "\u4ee3\u7406\u8bbe\u7f6e\u5df2\u66f4\u65b0\u3002",
       resetTitle: "\u6062\u590d\u9ed8\u8ba4\u8bbe\u7f6e",
       resetDescription:
-        "\u6e05\u7a7a\u5f53\u524d\u5de5\u5177\u3001\u6587\u7ae0\u3001\u5185\u5bb9\u6d41\u548c\u9884\u5efa\u5206\u7c7b\uff0c\u5e76\u5173\u95ed\u7ad9\u70b9\u6e90\u3002\u7ba1\u7406\u5458\u5bc6\u7801\u548c GitHub \u63d0\u4ea4\u8bbe\u7f6e\u4e0d\u4f1a\u88ab\u6e05\u9664\u3002",
+        "\u6e05\u7a7a\u5f53\u524d\u5de5\u5177\u3001\u6587\u7ae0\u3001\u5185\u5bb9\u6d41\u3001\u9884\u5efa\u5206\u7c7b\u548c Telegram \u63a8\u9001\u8bb0\u5f55\uff0c\u5e76\u5173\u95ed\u7ad9\u70b9\u6e90\u3002Telegram \u4e0a\u5df2\u7ecf\u53d1\u9001\u7684\u6d88\u606f\u4e0d\u4f1a\u88ab\u5220\u9664\u3002\u7cfb\u7edf\u8bbe\u7f6e\u4e2d\u7684\u7ad9\u70b9\u4fe1\u606f\u3001\u7ba1\u7406\u5458\u5bc6\u7801\u548c\u5404\u9879\u670d\u52a1\u914d\u7f6e\u90fd\u4e0d\u4f1a\u88ab\u6e05\u9664\u3002",
       resetWarning:
         "\u6b64\u64cd\u4f5c\u5c06\u5220\u9664\u6240\u6709\u5bfc\u5165\u6570\u636e\uff0c\u5efa\u8bae\u5148\u5bfc\u51fa\u5b8c\u6574\u5907\u4efd\u3002",
       resetButton: "恢复默认",
@@ -515,7 +515,7 @@ export function getAdminMaintenanceText(locale: Locale) {
     proxyUpdated: "Proxy settings updated.",
     resetTitle: "Restore Defaults",
     resetDescription:
-      "Clear tools, articles, content flows, and saved categories, then disable the site source. Admin password and GitHub submission settings are kept.",
+      "Clear tools, articles, content flows, saved categories, and Telegram push records, then disable the site source. Messages already sent to Telegram are not deleted. Site details, the admin password, and every service configuration in system settings are kept.",
     resetWarning: "This will delete all imported data. Export a full backup first if needed.",
     resetButton: "Restore",
     resetConfirm:

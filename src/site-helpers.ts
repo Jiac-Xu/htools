@@ -935,6 +935,19 @@ export function getLocalizedErrorMessage(
 
   if (codeMessages[errorCode]) return codeMessages[errorCode];
 
+  if (errorCode === "BACKUP_DATA_INVALID") {
+    const recordId =
+      typeof error === "object" &&
+      error !== null &&
+      "recordId" in error &&
+      typeof error.recordId === "string"
+        ? error.recordId
+        : "";
+    return isChinese
+      ? `备份数据存在关联问题${recordId ? `（记录 ${recordId}）` : ""}，请检查内容流与文章的关联后重试。`
+      : `The backup data has a broken reference${recordId ? ` (record ${recordId})` : ""}. Check the links between content items and articles, then try again.`;
+  }
+
   const businessCodeMessages: Record<string, string> = {
     INVALID_PASSWORD: isChinese ? "密码不正确。" : "Incorrect password.",
     TURNSTILE_CONFIG_ERROR: isChinese
@@ -964,8 +977,8 @@ export function getLocalizedErrorMessage(
       ? "Telegram 发送目标已经改变，请重新建立推送后再发送。"
       : "The Telegram target has changed. Rebuild the push before sending it again.",
     TELEGRAM_MESSAGE_TOO_LONG: isChinese
-      ? "完整消息超过 Telegram 的 32768 字符限制。"
-      : "The complete message exceeds Telegram's 32768-character limit.",
+      ? "完整消息超过 Telegram 的 4096 字符限制。"
+      : "The complete message exceeds Telegram's 4096-character limit.",
     TELEGRAM_UNAVAILABLE: isChinese
       ? "Telegram 服务请求失败，请检查机器人配置或稍后重试。"
       : "The Telegram request failed. Check the bot configuration or try again later.",

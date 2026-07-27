@@ -9,16 +9,15 @@ import {
 } from "../../_shared";
 
 const FAILURE_WINDOW_MS = 10 * 60 * 1000;
-const BLOCK_DURATION_MS = 15 * 60 * 1000;
+const BLOCK_DURATION_MS = 5 * 60 * 1000;
 const MAX_FAILURES = 5;
 
 async function getClientKey(request: Request) {
   const forwarded = request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim();
   const address = request.headers.get("CF-Connecting-IP")?.trim() || forwarded || "unknown";
-  const userAgent = request.headers.get("User-Agent")?.slice(0, 200) ?? "";
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(`${address}\n${userAgent}`)
+    new TextEncoder().encode(address)
   );
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -71,21 +70,23 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     };
     const password =
       typeof payload.password === "string" ? payload.password.trim() : "";
+    const clientKey = await getClientKey(request);
+    const retryAfter = await readLoginBlock(env, clientKey);
+    if (retryAfter > 0) {
+      return jsonError(
+        "Too many failed login attempts. Try again later.",
+        "RATE_LIMITED",
+        { status: 429, headers: { "Retry-After": String(retryAfter) } },
+        { retryAfter }
+      );
+    }
+
     const turnstileError = await verifyTurnstileRequest(
       request,
       env,
       payload.turnstileToken
     );
     if (turnstileError) return turnstileError;
-
-    const clientKey = await getClientKey(request);
-    const retryAfter = await readLoginBlock(env, clientKey);
-    if (retryAfter > 0) {
-      return jsonError("Too many failed login attempts. Try again later.", "RATE_LIMITED", {
-        status: 429,
-        headers: { "Retry-After": String(retryAfter) }
-      });
-    }
 
     if (!password || !(await verifyPassword(password, env))) {
       await recordLoginFailure(env, clientKey);

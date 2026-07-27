@@ -28,9 +28,11 @@ type ContentCategoryCountRow = {
   total: number;
 };
 
-type ContentItemCursor =
-  | { sort: "latest"; sortKey: string; id: string }
-  | { sort: "name"; title: string; id: string };
+type ContentItemCursor = {
+  sort: "latest" | "oldest";
+  sortKey: string;
+  id: string;
+};
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const unauthorized = await requireAdmin(request, env);
@@ -44,7 +46,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     const sourceId = readFilterValue(url.searchParams.get("sourceId"), 256);
     const category = readFilterValue(url.searchParams.get("category"), 48);
     const query = readFilterValue(url.searchParams.get("q"), MAX_SEARCH_LENGTH);
-    const sort = url.searchParams.get("sort") === "name" ? "name" : "latest";
+    const sort = url.searchParams.get("sort") === "oldest" ? "oldest" : "latest";
     const limit = readPageInteger(
       url.searchParams.get("limit"),
       DEFAULT_PAGE_LIMIT,
@@ -96,7 +98,7 @@ async function loadContentItemPage(
     cursor: ContentItemCursor | null;
     limit: number;
     sourceId: string;
-    sort: "latest" | "name";
+    sort: "latest" | "oldest";
     terms: ReturnType<typeof createSearchTerms> | null;
     useFts: boolean;
   }
@@ -147,20 +149,15 @@ async function loadContentItemPage(
     params.push(sourceId);
   }
 
-  if (cursor?.sort === "latest") {
+  if (cursor) {
+    const sortExpression =
+      "COALESCE(content_items.published_at, content_items.updated_at, content_items.created_at)";
     conditions.push(
-      `(COALESCE(content_items.published_at, content_items.updated_at, content_items.created_at) < ? OR
-        (COALESCE(content_items.published_at, content_items.updated_at, content_items.created_at) = ?
-         AND content_items.id < ?))`
+      cursor.sort === "oldest"
+        ? `(${sortExpression} > ? OR (${sortExpression} = ? AND content_items.id > ?))`
+        : `(${sortExpression} < ? OR (${sortExpression} = ? AND content_items.id < ?))`
     );
     params.push(cursor.sortKey, cursor.sortKey, cursor.id);
-  } else if (cursor?.sort === "name") {
-    conditions.push(
-      `(content_items.title COLLATE NOCASE > ? OR
-        (content_items.title COLLATE NOCASE = ? COLLATE NOCASE
-         AND content_items.id > ?))`
-    );
-    params.push(cursor.title, cursor.title, cursor.id);
   }
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -170,8 +167,8 @@ async function loadContentItemPage(
   const sourceCountJoin = terms && !useFts
     ? "JOIN content_sources ON content_sources.id = content_items.source_id"
     : "";
-  const orderBy = sort === "name"
-    ? "content_items.title COLLATE NOCASE ASC, content_items.id ASC"
+  const orderBy = sort === "oldest"
+    ? "sort_key ASC, content_items.id ASC"
     : "sort_key DESC, content_items.id DESC";
   const [result, sourceCountRows, categoryCountRows] = await Promise.all([
     db.prepare(
@@ -206,11 +203,7 @@ async function loadContentItemPage(
   const lastItem = items.at(-1);
   const nextCursor =
     hasMore && lastItem
-      ? createCursor(
-          sort === "name"
-            ? { sort: "name", title: lastItem.title, id: lastItem.id }
-            : { sort: "latest", sortKey: lastItem.sort_key, id: lastItem.id }
-        )
+      ? createCursor({ sort, sortKey: lastItem.sort_key, id: lastItem.id })
       : null;
   const sourceCounts = Object.fromEntries(
     sourceCountRows.results.map((row) => [row.source_id, Number(row.total ?? 0)])
@@ -256,7 +249,7 @@ function readFilterValue(value: string | null, maximumLength: number) {
 
 function parseCursor(
   value: string | null,
-  sort: "latest" | "name"
+  sort: "latest" | "oldest"
 ): ContentItemCursor | null {
   if (!value) {
     return null;
@@ -271,19 +264,10 @@ function parseCursor(
     if (parsed.sort !== sort || typeof parsed.id !== "string" || !parsed.id || parsed.id.length > 256) {
       throw new Error();
     }
-    if (sort === "latest" && parsed.sort === "latest") {
-      if (typeof parsed.sortKey !== "string" || !parsed.sortKey || parsed.sortKey.length > 64) {
-        throw new Error();
-      }
-      return { sort: "latest", sortKey: parsed.sortKey, id: parsed.id };
+    if (typeof parsed.sortKey !== "string" || !parsed.sortKey || parsed.sortKey.length > 64) {
+      throw new Error();
     }
-    if (sort === "name" && parsed.sort === "name") {
-      if (typeof parsed.title !== "string" || !parsed.title || parsed.title.length > 512) {
-        throw new Error();
-      }
-      return { sort: "name", title: parsed.title, id: parsed.id };
-    }
-    throw new Error();
+    return { sort, sortKey: parsed.sortKey, id: parsed.id };
   } catch {
     throw new Error("cursor is invalid.");
   }

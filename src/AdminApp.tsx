@@ -1,4 +1,4 @@
-import { ArrowDownUp, ArrowRightLeft, ArrowUp, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, Eraser, FileText, Github, Languages, LogOut, PanelLeft, Plus, RefreshCw, Rss, Search, Send, Settings, ShieldCheck, Star, SquarePen, Sun, Tags, Trash2, Upload, Wand2, Wrench, X } from "lucide-react";
+import { ArrowDownUp, ArrowRightLeft, ArrowUp, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, Eraser, Eye, FileText, Github, Languages, LogOut, PanelLeft, Plus, RefreshCw, Rss, Search, Send, Settings, ShieldCheck, Star, SquarePen, Sun, Tags, Trash2, Upload, Wand2, Wrench, X } from "lucide-react";
 import { ChangeEvent, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { applyAdminCategoryAction, checkLinks, createArticle, createContentSource, createTool, deleteArticle, deleteContentSource, deleteTelegramPush, deleteTool, exportBackupData, exportToolSourceData, importTools, loadAdminArticle, loadAdminArticles, loadAdminAuthConfig, loadAdminCategorySettings, loadAdminSecuritySettings, loadAdminTools, loadContentItems, loadContentSources, loadGitHubSettings, loadGitHubToolMetadata, loadProxySettings, loadSiteConfiguration, loadSiteSettings, loadSourceSettings, loadTelegramMessage, loadTelegramPushRecords, loadTelegramSettings, loadTurnstileSettings, loadUmamiSettings, login, patchSiteSettings, recoverTelegramMessage, resetFactorySettings, restoreBackupData, saveAdminCategorySettings, saveGitHubSettings, saveProxySettings, saveSourceSettings, saveTelegramMessage, saveTelegramSettings, saveTurnstileSettings, saveUmamiSettings, sendTelegramMessage, syncContentSource, testTelegramSettings, updateArticle, updateArticlePublished, updateAdminPassword, updateContentSource, convertContentItemToArticle, previewContentSource, updateTelegramMessage, updateTool, type AdminAuthConfig } from "./admin-api";
@@ -49,10 +49,10 @@ import { useOverlayFocusManagement } from "./useOverlayFocusManagement";
 import { useVisualViewportKeyboard } from "./useVisualViewportKeyboard";
 import { useUtilityMenuKeyboard } from "./useUtilityMenuKeyboard";
 import { hasCompleteUmamiSettings, normalizeUmamiScriptUrl, normalizeUmamiWebsiteId } from "./umami";
-import { buildTelegramPreviewMarkdown, countTelegramMessageCharacters, createDefaultTelegramBody, createTelegramArticleResource, createTelegramResourceMediaUrl, createTelegramToolResource, escapeTelegramPreviewHashtags, getTelegramText, TELEGRAM_MESSAGE_LIMIT, type TelegramPushResource } from "./telegram";
+import { buildTelegramPreviewMarkdown, countTelegramMessageCharacters, createDefaultTelegramBody, createTelegramArticleResource, createTelegramCustomBodyExample, createTelegramResourceMediaUrl, createTelegramToolResource, getTelegramText, readTelegramBodyTitle, replaceTelegramBodyTitle, TELEGRAM_MESSAGE_LIMIT, type TelegramPushResource } from "./telegram";
 import { getAdminMaintenanceText, getAdminWorkspaceText, getContentFlowText } from "./admin-text";
 import AdminMarkdownEditor from "./components/AdminMarkdownEditor";
-import type { MarkdownEditorMode } from "./markdown-editor";
+import { TELEGRAM_MARKDOWN_EDITOR_ACTIONS, type MarkdownEditorMode } from "./markdown-editor";
 import MarkdownContent from "./components/MarkdownContent";
 import TurnstileWidget from "./components/TurnstileWidget";
 import {
@@ -145,9 +145,14 @@ function formatAdminDocumentTitle(
   return `${pageTitle} · ${siteName} ${adminLabel}`;
 }
 
-type AdminSortMode = "latest" | "name";
+type AdminSortMode = "latest" | "oldest";
 type TelegramPushTypeFilter = "all" | TelegramResourceType;
-type AdminWriteEntityScope = "tool" | "article" | "content-source" | "content-item";
+type AdminWriteEntityScope =
+  | "tool"
+  | "article"
+  | "custom"
+  | "content-source"
+  | "content-item";
 const TELEGRAM_PUSH_PAGE_SIZE = 30;
 type TelegramMessageErrorCode =
   | "TELEGRAM_MESSAGE_NOT_FOUND"
@@ -189,11 +194,14 @@ const ADMIN_VIEW_STATE_STORAGE_KEYS = {
     search: "htools_admin_content_search",
     sort: "htools_admin_content_sort",
     source: "htools_admin_content_source"
+  },
+  telegram: {
+    sort: "htools_admin_telegram_push_sort"
   }
 } as const;
 
 function getStoredAdminSortMode(key: string): AdminSortMode {
-  return localStorage.getItem(key) === "name" ? "name" : "latest";
+  return localStorage.getItem(key) === "oldest" ? "oldest" : "latest";
 }
 
 function getStoredAdminFilter(key: string, fallback: string) {
@@ -224,7 +232,9 @@ function AdminSortButton({
   onChange: (mode: AdminSortMode) => void;
   t: Messages;
 }) {
-  const label = mode === "latest" ? t.admin.sortLatest : t.admin.sortName;
+  const label = mode === "latest" ? t.admin.sortLatest : t.admin.sortOldest;
+  const shortLabel =
+    mode === "latest" ? t.admin.sortLatestShort : t.admin.sortOldestShort;
 
   return (
     <button
@@ -235,14 +245,47 @@ function AdminSortButton({
       onPointerCancel={releaseTouchButtonFocus}
       onPointerDown={startTouchButtonPress}
       onPointerUp={releaseTouchButtonFocus}
-      onClick={() => onChange(mode === "latest" ? "name" : "latest")}
+      onClick={() => onChange(mode === "latest" ? "oldest" : "latest")}
     >
       <ArrowDownUp size={16} />
       <span className="admin-sort-label admin-sort-label-full">{label}</span>
       <span className="admin-sort-label admin-sort-label-compact" aria-hidden="true">
-        {t.actions.sort}
+        {shortLabel}
       </span>
     </button>
+  );
+}
+
+function AdminEmptyState({
+  action,
+  className = "",
+  description,
+  title
+}: {
+  action?: { label: string; onClick: () => void; tone?: "primary" | "ghost" };
+  className?: string;
+  description: string;
+  title: string;
+}) {
+  return (
+    <section className={`admin-empty-state ${className}`.trim()}>
+      <div className="empty-state-title">
+        <h2>{title}</h2>
+      </div>
+      <p>{description}</p>
+      {action ? (
+        <button
+          className={`${
+            action.tone === "ghost" ? "ghost-button" : "primary-button"
+          } empty-state-action`}
+          type="button"
+          onClick={action.onClick}
+        >
+          {action.label}
+          {action.tone === "ghost" ? null : <ArrowUpRight size={15} />}
+        </button>
+      ) : null}
+    </section>
   );
 }
 
@@ -368,43 +411,7 @@ function PublishModeField({
   );
 }
 
-function TelegramPushTypeFilter({
-  onChange,
-  text,
-  value
-}: {
-  onChange: (value: TelegramPushTypeFilter) => void;
-  text: ReturnType<typeof getTelegramText>["management"];
-  value: TelegramPushTypeFilter;
-}) {
-  const options: Array<{ label: string; value: TelegramPushTypeFilter }> = [
-    { label: text.filterAll, value: "all" },
-    { label: text.filterTools, value: "tool" },
-    { label: text.filterArticles, value: "article" }
-  ];
-
-  return (
-    <div
-      aria-label={text.title}
-      className="admin-segmented-toggle telegram-push-type-filter"
-      role="group"
-    >
-      {options.map((option) => (
-        <button
-          aria-pressed={value === option.value}
-          className={`admin-segmented-toggle-option ${
-            value === option.value ? "is-active" : ""
-          }`}
-          key={option.value}
-          type="button"
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+const TELEGRAM_PUSH_TYPE_OPTIONS = ["All", "tool", "article", "custom"];
 
 function BooleanSegmentedToggle({
   className = "",
@@ -611,6 +618,7 @@ export default function AdminApp({
   } = useUtilityMenuKeyboard<"locale" | "theme">("admin");
   const [token, setToken] = useState(() => localStorage.getItem("htools_token") ?? "");
   const [password, setPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [authConfig, setAuthConfig] = useState<AdminAuthConfig | null>(null);
   const [turnstileToken, setTurnstileToken] = useState("");
@@ -646,6 +654,9 @@ export default function AdminApp({
   const [telegramPushType, setTelegramPushType] =
     useState<TelegramPushTypeFilter>("all");
   const [telegramPushSearch, setTelegramPushSearch] = useState("");
+  const [telegramPushSortMode, setTelegramPushSortMode] = useState<AdminSortMode>(() =>
+    getStoredAdminSortMode(ADMIN_VIEW_STATE_STORAGE_KEYS.telegram.sort)
+  );
   const [debouncedTelegramPushSearch, setDebouncedTelegramPushSearch] = useState("");
   const [telegramPushTotal, setTelegramPushTotal] = useState(0);
   const [telegramPushHasMore, setTelegramPushHasMore] = useState(false);
@@ -658,8 +669,20 @@ export default function AdminApp({
   const [pendingDeleteTelegramPush, setPendingDeleteTelegramPush] =
     useState<TelegramPushRecord | null>(null);
   const [isDeletingTelegramPush, setIsDeletingTelegramPush] = useState(false);
+  const [pendingPushTelegramRecord, setPendingPushTelegramRecord] =
+    useState<TelegramPushRecord | null>(null);
+  const [isPushingTelegramRecord, setIsPushingTelegramRecord] = useState(false);
   const [telegramResource, setTelegramResource] = useState<TelegramPushResource | null>(null);
   const [telegramMessage, setTelegramMessage] = useState<TelegramMessage | null>(null);
+  const [telegramQuickResource, setTelegramQuickResource] =
+    useState<TelegramPushResource | null>(null);
+  const [telegramQuickMessage, setTelegramQuickMessage] =
+    useState<TelegramMessage | null>(null);
+  const [telegramQuickMode, setTelegramQuickMode] =
+    useState<ConvertPublishMode>("published");
+  const [telegramQuickLoading, setTelegramQuickLoading] = useState(false);
+  const [telegramQuickSaving, setTelegramQuickSaving] = useState(false);
+  const [telegramCustomTitle, setTelegramCustomTitle] = useState("");
   const [telegramBodyMarkdown, setTelegramBodyMarkdown] = useState("");
   const [telegramMediaEnabled, setTelegramMediaEnabled] = useState(false);
   const [telegramMediaUrl, setTelegramMediaUrl] = useState("");
@@ -963,6 +986,8 @@ export default function AdminApp({
   const telegramPreviewLength = countTelegramMessageCharacters(
     telegramPreviewMarkdown
   );
+  const telegramCustomTitleMissing =
+    Boolean(telegramResource) && !telegramCustomTitle.trim();
   const normalizedTelegramMediaUrl = normalizeHttpUrlInput(telegramMediaUrl);
   const telegramMediaValid = !telegramMediaEnabled || (
     Boolean(normalizedTelegramMediaUrl) &&
@@ -1138,6 +1163,13 @@ export default function AdminApp({
   useEffect(() => {
     localStorage.setItem(ADMIN_VIEW_STATE_STORAGE_KEYS.content.sort, contentSortMode);
   }, [contentSortMode]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      ADMIN_VIEW_STATE_STORAGE_KEYS.telegram.sort,
+      telegramPushSortMode
+    );
+  }, [telegramPushSortMode]);
 
   useEffect(() => {
     localStorage.setItem(ADMIN_VIEW_STATE_STORAGE_KEYS.tools.search, adminSearch);
@@ -1709,8 +1741,8 @@ export default function AdminApp({
     });
 
     return filtered.sort((left, right) => {
-      if (toolSortMode === "name") {
-        return left.name.localeCompare(right.name);
+      if (toolSortMode === "oldest") {
+        return (left.created_at ?? "").localeCompare(right.created_at ?? "");
       }
 
       return (right.created_at ?? "").localeCompare(left.created_at ?? "");
@@ -1875,7 +1907,6 @@ export default function AdminApp({
     adminToolsRequestGenerationRef.current = generation;
     setIsLoadingTools(true);
     setToolsLoadError(null);
-    if (tools.length === 0) setHasLoadedTools(false);
 
     try {
       const nextTools = await loadAdminTools(token);
@@ -1917,7 +1948,6 @@ export default function AdminApp({
     setIsLoadingMoreArticles(false);
     setAdminArticlesHasMore(false);
     setArticlesLoadError(null);
-    if (adminArticles.length === 0) setHasLoadedArticles(false);
 
     try {
       const nextPage = await loadAdminArticles(
@@ -2015,7 +2045,6 @@ export default function AdminApp({
     setIsLoadingMoreContent(false);
     setContentItemsHasMore(false);
     setContentLoadError(null);
-    if (contentItems.length === 0) setHasLoadedContent(false);
 
     const shouldReloadSources =
       options.reloadSources !== false || !contentSourcesLoadedRef.current;
@@ -2121,7 +2150,8 @@ export default function AdminApp({
       cursor,
       limit: TELEGRAM_PUSH_PAGE_SIZE,
       query: debouncedTelegramPushSearch.trim() || undefined,
-      resourceType: telegramPushType === "all" ? undefined : telegramPushType
+      resourceType: telegramPushType === "all" ? undefined : telegramPushType,
+      sort: telegramPushSortMode
     };
   }
 
@@ -2134,7 +2164,6 @@ export default function AdminApp({
     setIsLoadingMoreTelegramPushes(false);
     setTelegramPushHasMore(false);
     setTelegramPushLoadError(null);
-    if (telegramPushRecords.length === 0) setHasLoadedTelegramPushes(false);
 
     try {
       const page = await loadTelegramPushRecords(
@@ -2422,7 +2451,13 @@ export default function AdminApp({
   useEffect(() => {
     if (!token || adminView !== "push") return;
     void refreshTelegramPushRecords();
-  }, [token, adminView, telegramPushType, debouncedTelegramPushSearch]);
+  }, [
+    token,
+    adminView,
+    telegramPushType,
+    debouncedTelegramPushSearch,
+    telegramPushSortMode
+  ]);
 
   useLayoutEffect(() => {
     document.documentElement.classList.add("admin-route");
@@ -2532,6 +2567,8 @@ export default function AdminApp({
 
     const normalizedPassword = password.trim();
     if (!normalizedPassword) {
+      setPassword("");
+      setPasswordError(t.admin.passwordRequired);
       passwordInputRef.current?.focus();
       return;
     }
@@ -2548,6 +2585,7 @@ export default function AdminApp({
       localStorage.setItem("htools_token", nextToken);
       setToken(nextToken);
       setPassword("");
+      setPasswordError("");
     } catch (error) {
       const errorCode =
         typeof error === "object" && error !== null && "code" in error
@@ -2560,6 +2598,10 @@ export default function AdminApp({
         "TURNSTILE_REQUIRED",
         "TURNSTILE_UNAVAILABLE"
       ].includes(errorCode)) {
+        setStatus("");
+      } else if (errorCode === "INVALID_PASSWORD") {
+        setPassword("");
+        setPasswordError(getLocalizedErrorMessage(error, t));
         setStatus("");
       } else {
         setStatus(getLocalizedErrorMessage(error, t));
@@ -2608,6 +2650,18 @@ export default function AdminApp({
     }
 
     setAdminView(nextView);
+    closeMobileSidebar();
+    adminContentScrollRef.current?.scrollTo({ top: 0, behavior: "auto" });
+  }
+
+  function openServiceSettings() {
+    const nextPath = ADMIN_SYSTEM_SETTINGS_GROUP_PATHS.services;
+
+    if (window.location.pathname !== nextPath || window.location.search) {
+      window.history.pushState(null, "", nextPath);
+    }
+
+    setAdminView("system");
     closeMobileSidebar();
     adminContentScrollRef.current?.scrollTo({ top: 0, behavior: "auto" });
   }
@@ -2674,8 +2728,153 @@ export default function AdminApp({
     setTelegramMessageErrorCode("");
   }
 
+  async function confirmPushTelegramRecord() {
+    const record = pendingPushTelegramRecord;
+    if (!record || isPushingTelegramRecord) return;
+
+    const actionKey = getAdminWriteEntityKey(record.resourceType, record.resourceId);
+    if (!acquireWriteAction(actionKey)) return;
+    setIsPushingTelegramRecord(true);
+    setStatus("");
+
+    try {
+      await sendTelegramMessage(
+        record.resourceType,
+        record.resourceId,
+        record.messageMarkdown,
+        record.mediaEnabled,
+        record.mediaUrl,
+        locale,
+        token,
+        record.title
+      );
+      setStatus(telegramText.sent);
+      setPendingPushTelegramRecord(null);
+      void refreshTelegramPushRecords();
+    } catch (error) {
+      setStatus(getLocalizedErrorMessage(error, t));
+    } finally {
+      releaseWriteAction(actionKey);
+      setIsPushingTelegramRecord(false);
+    }
+  }
+
+  function openCreateTelegramPush() {
+    const resource: TelegramPushResource = {
+      type: "custom",
+      id: crypto.randomUUID(),
+      title: "",
+      description: "",
+      url: "",
+      demoUrl: "",
+      image: "",
+      tags: []
+    };
+    const defaultBody = buildTelegramPreviewMarkdown(
+      resource,
+      createTelegramCustomBodyExample(locale),
+      telegramSettings.footerMarkdown,
+      locale
+    );
+    setTelegramResource(resource);
+    setTelegramCustomTitle(readTelegramBodyTitle(defaultBody));
+    setTelegramMessage({
+      exists: false,
+      targetChanged: false,
+      syncStatus: "not_pushed",
+      bodyMarkdown: defaultBody,
+      mediaEnabled: false,
+      mediaUrl: "",
+      defaultBodyMarkdown: defaultBody,
+      defaultMediaUrl: ""
+    });
+    setTelegramBodyMarkdown(defaultBody);
+    setTelegramMediaEnabled(false);
+    setTelegramMediaUrl("");
+    setTelegramMarkdownEditorMode(undefined);
+    setTelegramMessageLoading(false);
+    setTelegramMessageErrorCode("");
+    setStatus("");
+  }
+
+  async function openTelegramQuickPush(resource: TelegramPushResource) {
+    if (isWriteEntityLocked(resource.type, resource.id)) return;
+    setTelegramQuickResource(resource);
+    setTelegramQuickMessage(null);
+    setTelegramQuickMode("published");
+    setTelegramQuickLoading(true);
+    setStatus("");
+
+    try {
+      const message = await loadTelegramMessage(
+        resource.type,
+        resource.id,
+        token,
+        locale
+      );
+      setTelegramQuickMessage(message);
+    } catch (error) {
+      setStatus(getLocalizedErrorMessage(error, t));
+      setTelegramQuickResource(null);
+    } finally {
+      setTelegramQuickLoading(false);
+    }
+  }
+
+  function closeTelegramQuickPush() {
+    if (telegramQuickSaving) return;
+    setTelegramQuickResource(null);
+    setTelegramQuickMessage(null);
+  }
+
+  async function confirmTelegramQuickPush() {
+    const resource = telegramQuickResource;
+    const message = telegramQuickMessage;
+    if (!resource || !message || telegramQuickLoading || telegramQuickSaving) return;
+
+    const actionKey = getAdminWriteEntityKey(resource.type, resource.id);
+    if (!acquireWriteAction(actionKey)) return;
+    setTelegramQuickSaving(true);
+    setStatus("");
+
+    try {
+      if (telegramQuickMode === "published") {
+        await sendTelegramMessage(
+          resource.type,
+          resource.id,
+          message.bodyMarkdown,
+          message.mediaEnabled,
+          message.mediaUrl,
+          locale,
+          token
+        );
+        setStatus(telegramText.sent);
+      } else {
+        await saveTelegramMessage(
+          resource.type,
+          resource.id,
+          message.bodyMarkdown,
+          message.mediaEnabled,
+          message.mediaUrl,
+          locale,
+          token
+        );
+        setStatus(telegramText.saved);
+      }
+      setTelegramQuickResource(null);
+      setTelegramQuickMessage(null);
+      if (adminView === "push") void refreshTelegramPushRecords();
+    } catch (error) {
+      setStatus(getLocalizedErrorMessage(error, t));
+    } finally {
+      releaseWriteAction(actionKey);
+      setTelegramQuickSaving(false);
+    }
+  }
+
   async function openTelegramMessageDialog(resource: TelegramPushResource) {
     if (isWriteEntityLocked(resource.type, resource.id)) return;
+    setTelegramCustomTitle(resource.title);
     const defaultBody = buildTelegramPreviewMarkdown(
       resource,
       createDefaultTelegramBody(resource),
@@ -2711,6 +2910,7 @@ export default function AdminApp({
       );
       setTelegramMessage(message);
       setTelegramBodyMarkdown(message.bodyMarkdown);
+      setTelegramCustomTitle(readTelegramBodyTitle(message.bodyMarkdown));
       setTelegramMediaEnabled(message.mediaEnabled);
       setTelegramMediaUrl(message.mediaUrl);
       setTelegramMessageErrorCode(
@@ -2746,6 +2946,7 @@ export default function AdminApp({
       telegramMessageSaving ||
       !telegramEditorDirty ||
       !telegramBodyMarkdown.trim() ||
+      telegramCustomTitleMissing ||
       !telegramMediaValid ||
       telegramPreviewLength > TELEGRAM_MESSAGE_LIMIT
     ) {
@@ -2768,7 +2969,8 @@ export default function AdminApp({
         telegramMediaEnabled,
         normalizedTelegramMediaUrl,
         locale,
-        token
+        token,
+        telegramCustomTitle
       );
       setTelegramMessage(message);
       setTelegramBodyMarkdown(message.bodyMarkdown);
@@ -2793,6 +2995,7 @@ export default function AdminApp({
       !telegramMessage ||
       telegramMessage.targetChanged ||
       telegramMessageSaving ||
+      telegramCustomTitleMissing ||
       !telegramMediaValid ||
       telegramPreviewLength > TELEGRAM_MESSAGE_LIMIT
     ) {
@@ -2816,7 +3019,8 @@ export default function AdminApp({
             telegramMediaEnabled,
             normalizedTelegramMediaUrl,
             locale,
-            token
+            token,
+            telegramCustomTitle
           )
         : await sendTelegramMessage(
             telegramResource.type,
@@ -2825,7 +3029,8 @@ export default function AdminApp({
             telegramMediaEnabled,
             normalizedTelegramMediaUrl,
             locale,
-            token
+            token,
+            telegramCustomTitle
           );
       setTelegramMessage(message);
       setStatus(
@@ -2857,6 +3062,7 @@ export default function AdminApp({
         "TELEGRAM_TARGET_CHANGED"
       ].includes(telegramMessageErrorCode) ||
       !telegramBodyMarkdown.trim() ||
+      telegramCustomTitleMissing ||
       !telegramMediaValid ||
       telegramPreviewLength > TELEGRAM_MESSAGE_LIMIT
     ) {
@@ -3295,7 +3501,7 @@ export default function AdminApp({
   }
 
   async function handleDeleteTelegramPush(record: TelegramPushRecord) {
-    if (isDeletingTelegramPush || !telegramSettings.enabled) return false;
+    if (isDeletingTelegramPush) return false;
     setIsDeletingTelegramPush(true);
     setStatus("");
 
@@ -3307,11 +3513,7 @@ export default function AdminApp({
       await refreshAfterMutation(refreshTelegramPushRecords);
       return true;
     } catch (error) {
-      setStatus(
-        getTelegramMessageErrorCode(error) === "TELEGRAM_PERMISSION_DENIED"
-          ? telegramText.management.deletePermissionDenied
-          : getLocalizedErrorMessage(error, t, t.status.deleteFailed)
-      );
+      setStatus(getLocalizedErrorMessage(error, t, t.status.deleteFailed));
       return false;
     } finally {
       setIsDeletingTelegramPush(false);
@@ -3571,11 +3773,14 @@ export default function AdminApp({
               <input
                 ref={passwordInputRef}
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  if (passwordError) setPasswordError("");
+                }}
                 disabled={isLoggingIn}
-                placeholder="ADMIN_PASSWORD"
+                className={passwordError ? "is-invalid" : ""}
+                placeholder={passwordError || "ADMIN_PASSWORD"}
                 type="password"
-                required
               />
             </label>
             {authConfig?.turnstileEnabled ? (
@@ -3651,20 +3856,20 @@ export default function AdminApp({
             <span>{articleText.adminNav}</span>
           </button>
           <button
-            className={adminView === "content" ? "is-active" : ""}
-            type="button"
-            onClick={() => selectAdminView("content")}
-          >
-            <Rss size={18} />
-            <span>{contentText.nav}</span>
-          </button>
-          <button
             className={adminView === "push" ? "is-active" : ""}
             type="button"
             onClick={() => selectAdminView("push")}
           >
             <Send size={18} />
             <span>{telegramText.management.nav}</span>
+          </button>
+          <button
+            className={adminView === "content" ? "is-active" : ""}
+            type="button"
+            onClick={() => selectAdminView("content")}
+          >
+            <Rss size={18} />
+            <span>{contentText.nav}</span>
           </button>
 
           <span className="admin-sidebar-section">{t.admin.settings}</span>
@@ -3888,6 +4093,29 @@ export default function AdminApp({
                 />
               </div>
             ) : null}
+            {adminView === "push" ? (
+              <div className="admin-command-row">
+                <button
+                  className="ghost-button admin-create-button"
+                  disabled={!telegramSettings.enabled}
+                  type="button"
+                  onClick={openCreateTelegramPush}
+                >
+                  <Plus size={16} />
+                  <span className="admin-create-label-full">
+                    {telegramText.management.addPush}
+                  </span>
+                  <span className="admin-create-label-compact" aria-hidden="true">
+                    {t.actions.add}
+                  </span>
+                </button>
+                <AdminSortButton
+                  mode={telegramPushSortMode}
+                  onChange={setTelegramPushSortMode}
+                  t={t}
+                />
+              </div>
+            ) : null}
             {adminView === "tools" ? (
               <AdminFilterBar
                 clearLabel={t.actions.clearFilters}
@@ -3993,9 +4221,28 @@ export default function AdminApp({
             {adminView === "push" ? (
               <AdminFilterBar
                 categoryControl={
-                  <TelegramPushTypeFilter
-                    onChange={setTelegramPushType}
-                    text={telegramText.management}
+                  <AdminCategoryFilter
+                    allLabel={telegramText.management.filterAll}
+                    allowCreate={false}
+                    categories={TELEGRAM_PUSH_TYPE_OPTIONS}
+                    categoryText={categoryText}
+                    labelFor={(category) =>
+                      isAllCategoryValue(category)
+                        ? telegramText.management.filterAll
+                        : category === "tool"
+                          ? telegramText.management.typeTool
+                          : category === "article"
+                            ? telegramText.management.typeArticle
+                            : telegramText.management.typeCustom
+                    }
+                    onChange={(category) => {
+                      setTelegramPushType(
+                        isAllCategoryValue(category)
+                          ? "all"
+                          : (category as TelegramResourceType)
+                      );
+                    }}
+                    t={t}
                     value={telegramPushType}
                   />
                 }
@@ -4016,7 +4263,12 @@ export default function AdminApp({
           </div>
         </header>
 
-        <div className="admin-content-scroll" ref={adminContentScrollRef}>
+        <div
+          className={`admin-content-scroll ${
+            adminView === "content" ? "is-full-height" : ""
+          }`}
+          ref={adminContentScrollRef}
+        >
           {status ? (
             <div
               aria-atomic="true"
@@ -4063,7 +4315,7 @@ export default function AdminApp({
                     }}
                     onEdit={() => openEdit(tool)}
                     onTelegram={() =>
-                      void openTelegramMessageDialog(createTelegramToolResource(tool))
+                      void openTelegramQuickPush(createTelegramToolResource(tool))
                     }
                     onToggleFeatured={() => requestToggleFeatured(tool)}
                     proxySettings={proxySettings}
@@ -4075,38 +4327,29 @@ export default function AdminApp({
                 ))}
               </section>
             ) : (
-              <section className="admin-empty-state">
-                <div className="empty-state-title">
-                  {tools.length === 0 ? <PanelLeft size={28} /> : <Search size={28} />}
-                  <h2>{tools.length === 0 ? t.empty.libraryTitle : t.admin.emptyTitle}</h2>
-                </div>
-                <p>
-                  {tools.length === 0
+              <AdminEmptyState
+                action={
+                  tools.length === 0
+                    ? {
+                        label: t.empty.libraryAction,
+                        onClick: () => selectAdminView("import-export")
+                      }
+                    : {
+                        label: t.actions.clearFilters,
+                        onClick: () => {
+                          setAdminCategory("All");
+                          setAdminSearch("");
+                        },
+                        tone: "ghost"
+                      }
+                }
+                description={
+                  tools.length === 0
                     ? t.empty.libraryDescription
-                    : t.admin.emptyDescription}
-                </p>
-                {tools.length === 0 ? (
-                  <button
-                    className="primary-button empty-state-action"
-                    type="button"
-                    onClick={() => selectAdminView("import-export")}
-                  >
-                    {t.empty.libraryAction}
-                    <ArrowUpRight size={15} />
-                  </button>
-                ) : (
-                  <button
-                    className="ghost-button empty-state-action"
-                    type="button"
-                    onClick={() => {
-                      setAdminCategory("All");
-                      setAdminSearch("");
-                    }}
-                  >
-                    {t.actions.clearFilters}
-                  </button>
-                )}
-              </section>
+                    : t.admin.emptyDescription
+                }
+                title={tools.length === 0 ? t.empty.libraryTitle : t.admin.emptyTitle}
+              />
             )
           )}
 
@@ -4146,7 +4389,7 @@ export default function AdminApp({
                       }}
                       onEdit={() => void openEditArticle(article)}
                       onTelegram={() =>
-                        void openTelegramMessageDialog(
+                        void openTelegramQuickPush(
                           createTelegramArticleResource(article, window.location.origin)
                         )
                       }
@@ -4170,47 +4413,31 @@ export default function AdminApp({
                 ) : null}
               </>
             ) : (
-              <section className="admin-empty-state">
-                <div className="empty-state-title">
-                  {!hasActiveArticleFilter && adminArticlesTotal === 0 ? (
-                    <FileText size={28} />
-                  ) : (
-                    <Search size={28} />
-                  )}
-                  <h2>
-                    {!hasActiveArticleFilter && adminArticlesTotal === 0
-                      ? articleText.emptyTitle
-                      : articleText.noMatchTitle}
-                  </h2>
-                </div>
-                <p>
-                  {!hasActiveArticleFilter && adminArticlesTotal === 0
+              <AdminEmptyState
+                action={
+                  !hasActiveArticleFilter && adminArticlesTotal === 0
+                    ? { label: articleText.addArticle, onClick: openCreateArticle }
+                    : {
+                        label: t.actions.clearFilters,
+                        onClick: () => {
+                          setArticleCategoryFilter("All");
+                          setArticleSearch("");
+                          setDebouncedArticleSearch("");
+                        },
+                        tone: "ghost"
+                      }
+                }
+                description={
+                  !hasActiveArticleFilter && adminArticlesTotal === 0
                     ? articleText.emptyDescription
-                    : articleText.noMatchDescription}
-                </p>
-                {!hasActiveArticleFilter && adminArticlesTotal === 0 ? (
-                  <button
-                    className="primary-button empty-state-action"
-                    type="button"
-                    onClick={openCreateArticle}
-                  >
-                    {articleText.addArticle}
-                    <ArrowUpRight size={15} />
-                  </button>
-                ) : (
-                  <button
-                    className="ghost-button empty-state-action"
-                    type="button"
-                    onClick={() => {
-                      setArticleCategoryFilter("All");
-                      setArticleSearch("");
-                      setDebouncedArticleSearch("");
-                    }}
-                  >
-                    {t.actions.clearFilters}
-                  </button>
-                )}
-              </section>
+                    : articleText.noMatchDescription
+                }
+                title={
+                  !hasActiveArticleFilter && adminArticlesTotal === 0
+                    ? articleText.emptyTitle
+                    : articleText.noMatchTitle
+                }
+              />
             )
           )}
 
@@ -4275,15 +4502,23 @@ export default function AdminApp({
                   void openTelegramMessageDialog(record.resource);
                 }
               }}
+              onClearFilters={() => {
+                setTelegramPushType("all");
+                setTelegramPushSearch("");
+                setDebouncedTelegramPushSearch("");
+              }}
+              onCreate={openCreateTelegramPush}
               onLoadMore={() => void loadMoreTelegramPushRecords()}
+              onOpenSettings={openServiceSettings}
+              onPush={setPendingPushTelegramRecord}
               onRetry={() => void refreshTelegramPushRecords()}
               onView={setViewingTelegramPush}
               records={telegramPushRecords}
               serviceEnabled={telegramSettings.enabled}
+              settingsLoading={telegramSettingsLoading}
               showSkeletons={showTelegramPushSkeletons}
               t={t}
               text={telegramText.management}
-              total={telegramPushTotal}
             />
           ) : null}
 
@@ -4339,6 +4574,79 @@ export default function AdminApp({
         </div>
       </main>
 
+      {telegramQuickResource ? (
+        <Dialog
+          closeDisabled={telegramQuickSaving}
+          closeLabel={t.actions.close}
+          descriptionId="telegram-quick-push-description"
+          onClose={closeTelegramQuickPush}
+          panelClassName="tool-editor-dialog"
+          title={telegramText.title}
+          footer={
+            <AdminDialogActions
+              disabled={
+                telegramQuickLoading ||
+                telegramQuickSaving ||
+                !telegramQuickMessage
+              }
+              primaryLabel={
+                telegramQuickMessage?.exists
+                  ? telegramText.quickPush.goManage
+                  : telegramQuickMode === "published"
+                    ? telegramText.send
+                    : telegramText.save
+              }
+              onPrimary={() => {
+                if (telegramQuickMessage?.exists) {
+                  closeTelegramQuickPush();
+                  selectAdminView("push");
+                  return;
+                }
+                void confirmTelegramQuickPush();
+              }}
+            />
+          }
+        >
+          <div className="tool-form article-form">
+            <p className="form-field-help" id="telegram-quick-push-description">
+              {telegramQuickMessage?.exists
+                ? telegramText.quickPush.alreadyPushed
+                : telegramText.quickPush.description}
+            </p>
+            {!telegramQuickLoading && !telegramQuickMessage?.exists ? (
+              <PublishModeField
+                disabled={telegramQuickSaving}
+                draftLabel={telegramText.quickPush.draftLabel}
+                label={telegramText.quickPush.modeLabel}
+                onChange={setTelegramQuickMode}
+                publishedLabel={telegramText.quickPush.sendLabel}
+                value={telegramQuickMode}
+              />
+            ) : null}
+            <div className="tool-form-field telegram-message-preview-field">
+              <span className="tool-form-label">{telegramText.previewTitle}</span>
+              <section className="tool-github-detail-card telegram-message-preview">
+                {telegramQuickMessage ? (
+                  <TelegramMessagePreview
+                    content={telegramQuickMessage.bodyMarkdown}
+                    mediaEnabled={telegramQuickMessage.mediaEnabled}
+                    mediaUrl={telegramQuickMessage.mediaUrl}
+                    locale={locale}
+                    proxySettings={proxySettings}
+                    resource={telegramQuickResource}
+                  />
+                ) : (
+                  <div className="tool-github-detail-placeholder">
+                    <Send size={16} />
+                    <span>{telegramText.loading}</span>
+                  </div>
+                )}
+              </section>
+            </div>
+          </div>
+        </Dialog>
+      ) : null}
+
       {telegramResource ? (
         <Dialog
           closeDisabled={telegramMessageSaving}
@@ -4369,6 +4677,7 @@ export default function AdminApp({
                   !telegramMessage ||
                   !telegramEditorDirty ||
                   !telegramBodyMarkdown.trim() ||
+                  telegramCustomTitleMissing ||
                   !telegramMediaValid ||
                   telegramPreviewLength > TELEGRAM_MESSAGE_LIMIT
                 }
@@ -4386,6 +4695,7 @@ export default function AdminApp({
                   telegramMessage.targetChanged ||
                   !telegramPushNeeded ||
                   !telegramBodyMarkdown.trim() ||
+                  telegramCustomTitleMissing ||
                   !telegramMediaValid ||
                   telegramPreviewLength > TELEGRAM_MESSAGE_LIMIT
                 }
@@ -4411,7 +4721,41 @@ export default function AdminApp({
             </div>
           ) : (
             <div className="telegram-message-editor tool-form">
-              <p className="telegram-message-description">{telegramText.description}</p>
+              <p className="telegram-message-description">
+                {telegramResource.type === "custom"
+                  ? telegramText.customDescription
+                  : telegramText.description}
+              </p>
+              <div className="tool-form-field">
+                <div className="admin-markdown-editor-heading">
+                  <label htmlFor="telegram-custom-title">
+                    {telegramText.customTitleLabel}
+                  </label>
+                  <span
+                    aria-busy={telegramMessageLoading}
+                    aria-live="polite"
+                    className={`telegram-message-heading-status source-card-status ${
+                      telegramMessageLoading ? "is-loading" : ""
+                    }`.trim()}
+                  >
+                    {telegramText.statuses[telegramMessage.syncStatus]}
+                  </span>
+                </div>
+                <input
+                  disabled={telegramMessageLoading || telegramMessageSaving}
+                  id="telegram-custom-title"
+                  maxLength={120}
+                  onChange={(event) => {
+                    const nextTitle = event.target.value;
+                    setTelegramCustomTitle(nextTitle);
+                    setTelegramBodyMarkdown((current) =>
+                      replaceTelegramBodyTitle(current, nextTitle)
+                    );
+                  }}
+                  placeholder={telegramText.customTitlePlaceholder}
+                  value={telegramCustomTitle}
+                />
+              </div>
               {telegramMessageErrorCode ? (
                 <div className="telegram-message-action-error" role="alert">
                   <p>
@@ -4429,6 +4773,7 @@ export default function AdminApp({
                         telegramMessageSaving ||
                         telegramMessageLoading ||
                         !telegramBodyMarkdown.trim() ||
+                        telegramCustomTitleMissing ||
                         !telegramMediaValid ||
                         telegramPreviewLength > TELEGRAM_MESSAGE_LIMIT
                       }
@@ -4473,25 +4818,18 @@ export default function AdminApp({
                 ) : null}
               </div>
               <AdminMarkdownEditor
+                actions={TELEGRAM_MARKDOWN_EDITOR_ACTIONS}
                 className="telegram-message-body-field"
                 disabled={telegramMessageLoading || telegramMessageSaving}
-                headingAside={
-                  <span
-                    aria-busy={telegramMessageLoading}
-                    aria-live="polite"
-                    className={`telegram-message-heading-status source-card-status ${
-                      telegramMessageLoading ? "is-loading" : ""
-                    }`.trim()}
-                  >
-                    {telegramText.statuses[telegramMessage.syncStatus]}
-                  </span>
-                }
                 id="telegram-rich-markdown-body"
                 label={telegramText.bodyLabel}
                 locale={locale}
                 maxLength={TELEGRAM_MESSAGE_LIMIT}
                 mode={telegramMarkdownEditorMode}
-                onChange={setTelegramBodyMarkdown}
+                onChange={(value) => {
+                  setTelegramBodyMarkdown(value);
+                  setTelegramCustomTitle(readTelegramBodyTitle(value));
+                }}
                 onModeChange={setTelegramMarkdownEditorMode}
                 preview={
                   telegramMessageLoading ? (
@@ -4501,7 +4839,7 @@ export default function AdminApp({
                     </div>
                   ) : (
                     <TelegramMessagePreview
-                      content={escapeTelegramPreviewHashtags(telegramPreviewMarkdown)}
+                      content={telegramPreviewMarkdown}
                       mediaEnabled={telegramMediaEnabled}
                       mediaUrl={normalizedTelegramMediaUrl}
                       locale={locale}
@@ -4531,17 +4869,16 @@ export default function AdminApp({
           closeLabel={t.actions.close}
           onClose={() => setViewingTelegramPush(null)}
           panelClassName="tool-editor-dialog telegram-message-dialog telegram-push-preview-dialog"
-          title={telegramText.management.previewTitle}
+          title={telegramText.management.viewAction}
         >
           <div className="telegram-push-preview-dialog-body">
-            <div className="telegram-push-preview-heading">
-              <strong>{viewingTelegramPush.title}</strong>
-              {!viewingTelegramPush.resourceExists ? (
+            {!viewingTelegramPush.resourceExists ? (
+              <div className="telegram-push-preview-heading">
                 <span className="source-card-status">
                   {telegramText.management.resourceDeleted}
                 </span>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
             <section className="tool-github-detail-card telegram-message-preview">
               <TelegramMessagePreview
                 content={viewingTelegramPush.messageMarkdown}
@@ -5374,6 +5711,22 @@ export default function AdminApp({
         />
       ) : null}
 
+      {pendingPushTelegramRecord ? (
+        <AdminConfirmDialog
+          cancelLabel={t.status.deleteCancel}
+          closeLabel={t.actions.close}
+          confirmLabel={t.actions.confirm}
+          descriptionId="push-telegram-record-dialog-description"
+          description={telegramText.management.pushConfirmDescription}
+          disabled={isPushingTelegramRecord}
+          onCancel={() => {
+            if (!isPushingTelegramRecord) setPendingPushTelegramRecord(null);
+          }}
+          onConfirm={() => void confirmPushTelegramRecord()}
+          title={telegramText.management.pushConfirmTitle}
+        />
+      ) : null}
+
       {pendingDeleteTelegramPush ? (
         <AdminConfirmDialog
           cancelLabel={t.status.deleteCancel}
@@ -5437,73 +5790,77 @@ function AdminTelegramPushPanel({
   isLoading,
   isLoadingMore,
   loadError,
+  onClearFilters,
+  onCreate,
   onDelete,
   onEdit,
   onLoadMore,
+  onOpenSettings,
+  onPush,
   onRetry,
   onView,
   records,
   serviceEnabled,
+  settingsLoading,
   showSkeletons,
   t,
   text,
-  total
 }: {
   hasActiveFilter: boolean;
   hasMore: boolean;
   isLoading: boolean;
   isLoadingMore: boolean;
   loadError: string | null;
+  onClearFilters: () => void;
+  onCreate: () => void;
   onDelete: (record: TelegramPushRecord) => void;
   onEdit: (record: TelegramPushRecord) => void;
   onLoadMore: () => void;
+  onOpenSettings: () => void;
+  onPush: (record: TelegramPushRecord) => void;
   onRetry: () => void;
   onView: (record: TelegramPushRecord) => void;
   records: TelegramPushRecord[];
   serviceEnabled: boolean;
+  settingsLoading: boolean;
   showSkeletons: boolean;
   t: Messages;
   text: ReturnType<typeof getTelegramText>["management"];
-  total: number;
 }) {
+  const serviceUnavailable = !settingsLoading && !serviceEnabled;
+
   return (
-    <section className="telegram-push-management" aria-label={text.title}>
-      <header className="telegram-push-management-heading">
-        <div>
-          <h2>{text.title}</h2>
-          <p>{text.description}</p>
-        </div>
-        {total > 0 ? <span className="source-card-status">{total}</span> : null}
-      </header>
-      {!serviceEnabled ? (
+    <>
+      {serviceUnavailable && records.length > 0 ? (
         <p className="telegram-push-service-note">{text.serviceDisabled}</p>
       ) : null}
 
       {isLoading && records.length === 0 ? (
         <SkeletonVisibility visible={showSkeletons}>
-          <div className="telegram-push-list" aria-hidden="true">
-            {Array.from({ length: 4 }).map((_, index) => (
+          <section className="admin-tool-grid" aria-label={text.title}>
+            {Array.from({ length: 8 }).map((_, index) => (
               <TelegramPushRecordSkeleton key={index} />
             ))}
-          </div>
+          </section>
         </SkeletonVisibility>
       ) : loadError && records.length === 0 ? (
         <AdminInitialLoadError message={loadError} onRetry={onRetry} t={t} />
       ) : records.length ? (
         <>
-          <div className="telegram-push-list">
+          <section className="admin-tool-grid" aria-label={text.title}>
             {records.map((record) => (
               <TelegramPushRecordCard
                 key={record.id}
                 onDelete={() => onDelete(record)}
                 onEdit={() => onEdit(record)}
+                onPush={() => onPush(record)}
                 onView={() => onView(record)}
                 record={record}
                 serviceEnabled={serviceEnabled}
                 text={text}
               />
             ))}
-          </div>
+          </section>
           {hasMore ? (
             <div className="content-flow-load-more">
               <button
@@ -5518,21 +5875,42 @@ function AdminTelegramPushPanel({
           ) : null}
         </>
       ) : (
-        <section className="admin-empty-state telegram-push-empty-state">
-          <div className="empty-state-title">
-            {hasActiveFilter ? <Search size={28} /> : <Send size={28} />}
-            <h2>{hasActiveFilter ? text.noMatchTitle : text.emptyTitle}</h2>
-          </div>
-          <p>{hasActiveFilter ? text.noMatchDescription : text.emptyDescription}</p>
-        </section>
+        <AdminEmptyState
+          action={
+            serviceUnavailable
+              ? { label: text.serviceDisabledAction, onClick: onOpenSettings }
+              : hasActiveFilter
+                ? {
+                    label: t.actions.clearFilters,
+                    onClick: onClearFilters,
+                    tone: "ghost"
+                  }
+                : { label: text.addPush, onClick: onCreate }
+          }
+          description={
+            serviceUnavailable
+              ? text.serviceDisabledDescription
+              : hasActiveFilter
+                ? text.noMatchDescription
+                : text.emptyDescription
+          }
+          title={
+            serviceUnavailable
+              ? text.serviceDisabledTitle
+              : hasActiveFilter
+                ? text.noMatchTitle
+                : text.emptyTitle
+          }
+        />
       )}
-    </section>
+    </>
   );
 }
 
 function TelegramPushRecordCard({
   onDelete,
   onEdit,
+  onPush,
   onView,
   record,
   serviceEnabled,
@@ -5540,37 +5918,59 @@ function TelegramPushRecordCard({
 }: {
   onDelete: () => void;
   onEdit: () => void;
+  onPush: () => void;
   onView: () => void;
   record: TelegramPushRecord;
   serviceEnabled: boolean;
   text: ReturnType<typeof getTelegramText>["management"];
 }) {
   const actions = useAdminCardActionMenu(`telegram-push:${record.id}`);
+  const pushed = record.syncStatus !== "not_pushed";
   const displayDate = formatAdminDate(record.sentAt || record.updatedAt);
-  const description = cleanArticleDisplayText(record.messageMarkdown);
+  const summary = cleanArticleDisplayText(
+    record.resource?.description || record.messageMarkdown
+  );
+  const browseHref = record.resource?.url ?? "";
+  const tags = record.resource?.tags ?? [];
 
   return (
-    <article className="telegram-push-record-card">
-      <div className="telegram-push-record-head">
-        <span className="telegram-push-record-icon" aria-hidden="true">
-          <Send size={18} />
-        </span>
-        <div className="telegram-push-record-title">
-          <h2>{record.title}</h2>
-          <div className="telegram-push-record-meta">
-            <span>
-              {record.resourceType === "tool" ? text.typeTool : text.typeArticle}
-            </span>
-            <span>
-              {record.syncStatus === "synced"
-                ? text.statusSynced
-                : text.statusPending}
-            </span>
-            <span>{record.mediaEnabled ? text.imageEnabled : text.imageDisabled}</span>
+    <article className="admin-tool-card admin-article-card">
+      <div className="admin-tool-card-head">
+        <div className="admin-tool-title">
+          <div className="admin-tool-title-row">
+            <h2>{record.title}</h2>
+          </div>
+          <div className="admin-tool-title-meta">
             {displayDate ? <span>{displayDate}</span> : null}
+            <span>
+              {record.resourceType === "tool"
+                ? text.typeTool
+                : record.resourceType === "article"
+                  ? text.typeArticle
+                  : text.typeCustom}
+            </span>
+            {!record.resourceExists ? <span>{text.resourceDeleted}</span> : null}
           </div>
         </div>
         <div className="admin-tool-card-actions" ref={actions.rootRef}>
+          <button
+            aria-label={pushed ? text.statusPushed : text.pushAction}
+            className={`icon-button admin-article-publish-button ${
+              pushed ? "is-active" : ""
+            }`}
+            disabled={pushed || !serviceEnabled}
+            title={pushed ? text.statusPushed : text.pushAction}
+            type="button"
+            onClick={() => {
+              actions.close();
+              onPush();
+            }}
+            onPointerCancel={releaseTouchButtonFocus}
+            onPointerDown={startTouchButtonPress}
+            onPointerUp={releaseTouchButtonFocus}
+          >
+            {pushed ? <CheckCircle2 size={16} /> : <Circle size={16} />}
+          </button>
           <button
             aria-expanded={actions.open}
             aria-haspopup="menu"
@@ -5594,18 +5994,6 @@ function TelegramPushRecordCard({
               onKeyDown={actions.handleMenuKeyDown}
               role="menu"
             >
-              <button
-                role="menuitem"
-                type="button"
-                onClick={() => {
-                  actions.close();
-                  onView();
-                }}
-              >
-                <FileText size={17} />
-                <span className="admin-action-label-full">{text.viewAction}</span>
-                <span className="admin-action-label-short">{text.viewActionShort}</span>
-              </button>
               {record.resourceExists ? (
                 <button
                   disabled={!serviceEnabled}
@@ -5623,7 +6011,6 @@ function TelegramPushRecordCard({
               ) : null}
               <button
                 className="danger"
-                disabled={!serviceEnabled}
                 role="menuitem"
                 type="button"
                 onClick={() => {
@@ -5639,12 +6026,21 @@ function TelegramPushRecordCard({
           ) : null}
         </div>
       </div>
-      {!record.resourceExists ? (
-        <span className="source-card-status telegram-push-resource-status">
-          {text.resourceDeleted}
-        </span>
-      ) : null}
-      <p className="telegram-push-record-description">{description}</p>
+      <p className="admin-tool-description">{summary}</p>
+      <div className="admin-tool-links">
+        <div className="admin-tool-link-row" title={browseHref || text.viewAction}>
+          <button
+            className="admin-tool-link-text telegram-push-view-link"
+            type="button"
+            onClick={onView}
+          >
+            {text.viewAction}
+          </button>
+        </div>
+      </div>
+      <div className="admin-tool-card-footer">
+        <CompactTagRow tags={tags} />
+      </div>
     </article>
   );
 }
@@ -5653,26 +6049,38 @@ function TelegramPushRecordSkeleton() {
   return (
     <article
       aria-hidden="true"
-      className="telegram-push-record-card skeleton-layout-mask"
+      className="admin-tool-card admin-article-card admin-article-card-skeleton skeleton-layout-mask"
     >
-      <div className="telegram-push-record-head">
-        <span className="telegram-push-record-icon"><Send size={18} /></span>
-        <div className="telegram-push-record-title">
-          <h2>Telegram push title</h2>
-          <div className="telegram-push-record-meta">
-            <span>Resource</span>
-            <span>Synced</span>
-            <span>With image</span>
+      <div className="admin-tool-card-head">
+        <div className="admin-tool-title">
+          <div className="admin-tool-title-row">
+            <h2>Telegram push title placeholder</h2>
+          </div>
+          <div className="admin-tool-title-meta">
             <span>2026-07-26</span>
+            <span>Resource</span>
           </div>
         </div>
-        <button className="icon-button" disabled type="button">
-          <ChevronDown size={17} />
-        </button>
+        <div className="admin-tool-card-actions">
+          <button className="icon-button" disabled type="button">
+            <Circle size={16} />
+          </button>
+          <button className="icon-button" disabled type="button">
+            <ChevronDown size={17} />
+          </button>
+        </div>
       </div>
-      <p className="telegram-push-record-description">
+      <p className="admin-tool-description">
         Telegram message content preview follows the final record structure.
       </p>
+      <div className="admin-tool-links">
+        <div className="admin-tool-link-row">
+          <span className="admin-tool-link-text">Telegram push preview</span>
+        </div>
+      </div>
+      <div className="admin-tool-card-footer">
+        <CompactTagRow tags={["Telegram", "Push", "Record"]} />
+      </div>
     </article>
   );
 }
@@ -5778,29 +6186,26 @@ function AdminContentFlowPanel({
 
       <div className="content-flow-main">
         {contentSources.length === 0 ? (
-          <section className="admin-empty-state content-flow-empty">
-            <div className="empty-state-title">
-              {hasAnyContentSources ? <Search size={28} /> : <Rss size={28} />}
-              <h2>
-                {hasAnyContentSources ? contentText.noMatchTitle : contentText.sourceEmptyTitle}
-              </h2>
-            </div>
-            <p>
-              {hasAnyContentSources
+          <AdminEmptyState
+            action={
+              hasAnyContentSources
+                ? {
+                    label: clearFiltersLabel,
+                    onClick: onClearFilters,
+                    tone: "ghost"
+                  }
+                : { label: contentText.addContent, onClick: onAddSource }
+            }
+            className="content-flow-empty"
+            description={
+              hasAnyContentSources
                 ? contentText.noMatchDescription
-                : contentText.sourceEmptyDescription}
-            </p>
-            {hasAnyContentSources ? (
-              <button className="ghost-button empty-state-action" type="button" onClick={onClearFilters}>
-                {clearFiltersLabel}
-              </button>
-            ) : (
-              <button className="primary-button empty-state-action" type="button" onClick={onAddSource}>
-                {contentText.addContent}
-                <ArrowUpRight size={15} />
-              </button>
-            )}
-          </section>
+                : contentText.sourceEmptyDescription
+            }
+            title={
+              hasAnyContentSources ? contentText.noMatchTitle : contentText.sourceEmptyTitle
+            }
+          />
         ) : (
           <>
             {visibleContentItems.length ? (
@@ -5819,26 +6224,28 @@ function AdminContentFlowPanel({
                 ))}
               </div>
             ) : (
-              <section className="admin-empty-state content-flow-empty">
-                <div className="empty-state-title">
-                  {!hasActiveFilter && contentCategoryItemCount === 0 ? <Rss size={28} /> : <Search size={28} />}
-                  <h2>
-                    {!hasActiveFilter && contentCategoryItemCount === 0
-                      ? contentText.itemEmptyTitle
-                      : contentText.noMatchTitle}
-                  </h2>
-                </div>
-                <p>
-                  {!hasActiveFilter && contentCategoryItemCount === 0
+              <AdminEmptyState
+                action={
+                  hasActiveFilter
+                    ? {
+                        label: clearFiltersLabel,
+                        onClick: onClearFilters,
+                        tone: "ghost"
+                      }
+                    : undefined
+                }
+                className="content-flow-empty"
+                description={
+                  !hasActiveFilter && contentCategoryItemCount === 0
                     ? contentText.itemEmptyDescription
-                    : contentText.noMatchDescription}
-                </p>
-                {hasActiveFilter ? (
-                  <button className="ghost-button empty-state-action" type="button" onClick={onClearFilters}>
-                    {clearFiltersLabel}
-                  </button>
-                ) : null}
-              </section>
+                    : contentText.noMatchDescription
+                }
+                title={
+                  !hasActiveFilter && contentCategoryItemCount === 0
+                    ? contentText.itemEmptyTitle
+                    : contentText.noMatchTitle
+                }
+              />
             )}
             {hasMoreContent ? (
               <div className="content-flow-load-more">
@@ -5880,14 +6287,9 @@ function ContentSourceButton({
   onSync: () => void;
   source: ContentSource;
 }) {
-  const Icon = getCategoryIcon(source.category);
-
   return (
     <div className={`content-source-item ${isSelected ? "is-active" : ""}`}>
       <button className="content-source-main" type="button" onClick={onSelect}>
-        <span className="content-source-icon">
-          <Icon size={16} />
-        </span>
         <span className="content-source-copy">
           <strong>{source.title}</strong>
           <small>{contentText.sourceCount(count)}</small>
@@ -6128,6 +6530,7 @@ function AdminCategoryFilter({
   className = "",
   disabled = false,
   emptyLabel,
+  labelFor,
   onChange,
   onDeleteCategory,
   onMoveCategory,
@@ -6142,6 +6545,7 @@ function AdminCategoryFilter({
   className?: string;
   disabled?: boolean;
   emptyLabel?: string;
+  labelFor?: (category: string) => string;
   onChange: (category: string) => void;
   onDeleteCategory?: (category: string) => void;
   onMoveCategory?: (category: string) => void;
@@ -6156,11 +6560,15 @@ function AdminCategoryFilter({
   const focusTargetRef = useRef<"first" | "last" | null>(null);
   const directTouchFocusUntilRef = useRef(0);
   const emptyText = categoryText.empty;
+  const resolveLabel = useCallback(
+    (category: string) => labelFor?.(category) ?? getCategoryLabel(category, t),
+    [labelFor, t]
+  );
   const normalizedValue = normalizeAdminCategoryValue(value);
   const selectedLabel = normalizedValue
     ? isAllCategoryValue(normalizedValue) && allLabel
       ? allLabel
-      : getCategoryLabel(normalizedValue, t)
+      : resolveLabel(normalizedValue)
     : (emptyLabel ?? getCategoryLabel("All", t));
   const displaySelectedLabel = getAdminCategoryDisplayLabel(selectedLabel);
   const createCategoryName = query.trim();
@@ -6176,11 +6584,11 @@ function AdminCategoryFilter({
     }
 
     return uniqueCategories.filter((category) => {
-      const label = getCategoryLabel(category, t);
+      const label = resolveLabel(category);
 
       return `${category} ${label}`.toLowerCase().includes(normalizedQuery);
     });
-  }, [categories, query, t]);
+  }, [categories, query, resolveLabel]);
   const canCreateCategory = useMemo(() => {
     const normalizedName = createCategoryName.toLowerCase();
 
@@ -6194,18 +6602,21 @@ function AdminCategoryFilter({
     }
 
     return !categories.some((category) => {
-      const label = getCategoryLabel(category, t).toLowerCase();
+      const label = resolveLabel(category).toLowerCase();
 
       return (
         normalizeAdminCategoryValue(category).toLowerCase() === normalizedName ||
         label === normalizedName
       );
     });
-  }, [allowCreate, categories, createCategoryName, t]);
+  }, [allowCreate, categories, createCategoryName, resolveLabel]);
   const categoryWidthChars = useMemo(() => {
     const widthLabel = allLabel ?? emptyLabel ?? categoryText.selectLabel;
-    return Math.max(6, getAdminCategoryLabelWidth(widthLabel));
-  }, [allLabel, categoryText.selectLabel, emptyLabel]);
+    return Math.max(
+      getAdminCategoryLabelWidth(categoryText.topLabel),
+      getAdminCategoryLabelWidth(widthLabel)
+    );
+  }, [allLabel, categoryText.selectLabel, categoryText.topLabel, emptyLabel]);
   const categoryFilterStyle = {
     "--admin-category-filter-text-width": `${categoryWidthChars}em`
   } as CSSProperties;
@@ -6499,7 +6910,7 @@ function AdminCategoryFilter({
                 {filteredCategories.map((category) => {
                   const selected = category === normalizedValue;
                   const canDelete = Boolean(onDeleteCategory);
-                  const categoryLabel = getCategoryLabel(category, t);
+                  const categoryLabel = resolveLabel(category);
                   const displayCategoryLabel =
                     getAdminCategoryDisplayLabel(categoryLabel);
                   const movableCategories = filteredCategories.filter(

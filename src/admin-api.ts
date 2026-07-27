@@ -268,7 +268,7 @@ export async function loadAdminArticles(
   params: {
     category?: string;
     query?: string;
-    sort?: "latest" | "name";
+    sort?: "latest" | "oldest";
     limit?: number;
     cursor?: string;
   } = {}
@@ -456,7 +456,7 @@ export async function loadContentItems(
     sourceId?: string;
     category?: string;
     query?: string;
-    sort?: "latest" | "name";
+    sort?: "latest" | "oldest";
     limit?: number;
     cursor?: string;
   } = {}
@@ -831,7 +831,7 @@ export async function testTelegramSettings(token: string) {
 }
 
 export async function loadTelegramMessage(
-  resourceType: "tool" | "article",
+  resourceType: TelegramResourceType,
   resourceId: string,
   token: string,
   locale: "zh" | "en"
@@ -850,6 +850,7 @@ export async function loadTelegramPushRecords(
     limit?: number;
     query?: string;
     resourceType?: TelegramResourceType;
+    sort?: "latest" | "oldest";
   } = {}
 ): Promise<TelegramPushPage> {
   const searchParams = new URLSearchParams();
@@ -857,6 +858,7 @@ export async function loadTelegramPushRecords(
   if (params.limit) searchParams.set("limit", String(params.limit));
   if (params.query) searchParams.set("q", params.query);
   if (params.resourceType) searchParams.set("type", params.resourceType);
+  if (params.sort) searchParams.set("sort", params.sort);
   const suffix = searchParams.size ? `?${searchParams.toString()}` : "";
   const response = await fetch(`/api/admin/telegram-messages${suffix}`, {
     headers: { Accept: "application/json", Authorization: `Bearer ${token}` }
@@ -881,13 +883,14 @@ export async function deleteTelegramPush(
 }
 
 export async function sendTelegramMessage(
-  resourceType: "tool" | "article",
+  resourceType: TelegramResourceType,
   resourceId: string,
   bodyMarkdown: string,
   mediaEnabled: boolean,
   mediaUrl: string,
   locale: "zh" | "en",
-  token: string
+  token: string,
+  title = ""
 ) {
   const response = await fetch(
     `/api/admin/telegram-messages/${resourceType}/${encodeURIComponent(resourceId)}`,
@@ -897,20 +900,21 @@ export async function sendTelegramMessage(
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ bodyMarkdown, mediaEnabled, mediaUrl, locale })
+      body: JSON.stringify({ bodyMarkdown, mediaEnabled, mediaUrl, locale, title })
     }
   );
   return (await readJson<TelegramMessageResponse>(response)).message;
 }
 
 export async function updateTelegramMessage(
-  resourceType: "tool" | "article",
+  resourceType: TelegramResourceType,
   resourceId: string,
   bodyMarkdown: string,
   mediaEnabled: boolean,
   mediaUrl: string,
   locale: "zh" | "en",
-  token: string
+  token: string,
+  title = ""
 ) {
   const response = await fetch(
     `/api/admin/telegram-messages/${resourceType}/${encodeURIComponent(resourceId)}`,
@@ -920,14 +924,14 @@ export async function updateTelegramMessage(
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ bodyMarkdown, mediaEnabled, mediaUrl, locale })
+      body: JSON.stringify({ bodyMarkdown, mediaEnabled, mediaUrl, locale, title })
     }
   );
   return (await readJson<TelegramMessageResponse>(response)).message;
 }
 
 export async function recoverTelegramMessage(
-  resourceType: "tool" | "article",
+  resourceType: TelegramResourceType,
   resourceId: string,
   bodyMarkdown: string,
   mediaEnabled: boolean,
@@ -950,13 +954,14 @@ export async function recoverTelegramMessage(
 }
 
 export async function saveTelegramMessage(
-  resourceType: "tool" | "article",
+  resourceType: TelegramResourceType,
   resourceId: string,
   bodyMarkdown: string,
   mediaEnabled: boolean,
   mediaUrl: string,
   locale: "zh" | "en",
-  token: string
+  token: string,
+  title = ""
 ) {
   const response = await fetch(
     `/api/admin/telegram-messages/${resourceType}/${encodeURIComponent(resourceId)}`,
@@ -966,7 +971,7 @@ export async function saveTelegramMessage(
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ bodyMarkdown, mediaEnabled, mediaUrl, locale })
+      body: JSON.stringify({ bodyMarkdown, mediaEnabled, mediaUrl, locale, title })
     }
   );
   return (await readJson<TelegramMessageResponse>(response)).message;

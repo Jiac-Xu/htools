@@ -14,6 +14,15 @@ export const MARKDOWN_EDITOR_ACTIONS = [
   "link"
 ] as const;
 
+export const TELEGRAM_MARKDOWN_EDITOR_ACTIONS = [
+  "bold",
+  "italic",
+  "quote",
+  "list",
+  "code",
+  "link"
+] as const;
+
 export const MARKDOWN_EDITOR_MODES = ["edit", "preview"] as const;
 
 export type MarkdownEditorAction = (typeof MARKDOWN_EDITOR_ACTIONS)[number];

@@ -275,7 +275,7 @@ export type TelegramMessage = {
   defaultMediaUrl: string;
 };
 
-export type TelegramResourceType = "tool" | "article";
+export type TelegramResourceType = "tool" | "article" | "custom";
 
 export type TelegramPushResource = {
   type: TelegramResourceType;
@@ -298,7 +298,7 @@ export type TelegramPushRecord = {
   messageMarkdown: string;
   mediaEnabled: boolean;
   mediaUrl: string;
-  syncStatus: "pending" | "synced";
+  syncStatus: "not_pushed" | "pending" | "synced";
   sentAt: string;
   updatedAt: string;
 };

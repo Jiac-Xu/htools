@@ -3610,6 +3610,21 @@ html[data-theme="dark"] .skeleton-shimmer::after {
   box-shadow: none;
 }
 
+.auth-card-actions .icon-button:hover,
+.auth-card-actions .icon-button:focus-visible,
+.auth-card-actions .icon-button[aria-expanded="true"] {
+  background: var(--interaction-gray-bg);
+  color: var(--text);
+}
+
+.auth-form input.is-invalid::placeholder {
+  color: #b42318;
+}
+
+html[data-theme="dark"] .auth-form input.is-invalid::placeholder {
+  color: #f97066;
+}
+
 .auth-home-brand {
   display: flex;
   align-items: center;
@@ -4556,6 +4571,18 @@ html[data-theme="light"] .admin-workspace {
   padding: 16px var(--site-edge-padding) 48px var(--category-column-gap);
 }
 
+@media (min-width: 921px) {
+  .admin-content-scroll.is-full-height,
+  .admin-content-scroll:has(> .admin-empty-state) {
+    padding-bottom: 20px;
+  }
+
+  .admin-content-scroll.is-full-height > .content-flow-layout,
+  .admin-content-scroll > .admin-empty-state {
+    min-height: 100%;
+  }
+}
+
 .link-check-stats {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -5111,7 +5138,7 @@ html[data-theme="light"] .admin-workspace {
 .admin-empty-state {
   display: grid;
   min-height: 260px;
-  align-content: center;
+  align-content: start;
   justify-items: center;
   gap: 12px;
   border: 1px solid var(--border);
@@ -5327,140 +5354,25 @@ html[data-theme="dark"] .telegram-message-count .is-invalid {
   color: #f97066;
 }
 
-.admin-segmented-toggle.telegram-push-type-filter {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.telegram-push-management {
-  display: grid;
-  min-width: 0;
-  gap: 14px;
-}
-
-.telegram-push-management-heading {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.telegram-push-management-heading > div {
-  display: grid;
-  min-width: 0;
-  gap: 6px;
-}
-
-.telegram-push-management-heading h2,
-.telegram-push-management-heading p,
-.telegram-push-record-title h2,
-.telegram-push-record-description,
 .telegram-push-service-note {
   margin: 0;
-}
-
-.telegram-push-management-heading h2,
-.telegram-push-record-title h2 {
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.telegram-push-management-heading p,
-.telegram-push-service-note,
-.telegram-push-record-description,
-.telegram-push-record-meta {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px 12px;
   color: var(--text);
   font-size: 14px;
   font-weight: 400;
   line-height: 1.4;
 }
 
-.telegram-push-service-note {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  padding: 10px 12px;
-}
-
-.telegram-push-list {
-  display: grid;
-  min-width: 0;
-  gap: 10px;
-}
-
-.telegram-push-record-card {
-  position: relative;
-  display: grid;
-  min-width: 0;
-  gap: 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  padding: 14px 16px;
-}
-
-.telegram-push-record-head {
-  display: grid;
-  min-width: 0;
-  align-items: start;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
-.telegram-push-record-icon {
-  display: inline-flex;
-  width: 36px;
-  height: 36px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-}
-
-.telegram-push-record-title {
-  display: grid;
-  min-width: 0;
-  gap: 6px;
-}
-
-.telegram-push-record-title h2 {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.telegram-push-record-meta {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  color: var(--muted);
-}
-
-.telegram-push-record-description {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--text);
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.telegram-push-record-card.skeleton-layout-mask .telegram-push-record-title h2 {
-  width: min(48%, 280px);
-  min-height: 17px;
-}
-
-.telegram-push-resource-status {
-  width: fit-content;
-}
-
-.telegram-push-empty-state {
-  min-height: 240px;
+.telegram-push-view-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .telegram-push-preview-dialog-body {
@@ -5473,28 +5385,20 @@ html[data-theme="dark"] .telegram-message-count .is-invalid {
   display: flex;
   min-width: 0;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
 }
 
-.telegram-push-preview-heading strong {
-  overflow: hidden;
-  min-width: 0;
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .telegram-push-preview-dialog .telegram-message-preview {
-  min-height: 260px;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .telegram-message-preview {
   min-width: 0;
   min-height: 220px;
+  align-content: start;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -5594,11 +5498,6 @@ html[data-theme="dark"] .telegram-message-count .is-invalid {
 }
 
 @media (max-width: 760px) {
-  .admin-topbar-actions .telegram-push-type-filter {
-    grid-column: 1 / -1;
-    grid-row: 1;
-  }
-
   .admin-markdown-toolbar {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5618,19 +5517,6 @@ html[data-theme="dark"] .telegram-message-count .is-invalid {
     min-height: 148px;
   }
 
-  .telegram-push-management-heading {
-    gap: 10px;
-  }
-
-  .telegram-push-record-card {
-    padding: 14px;
-  }
-
-  .telegram-push-record-meta {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, max-content));
-    gap: 4px 10px;
-  }
 }
 
 .admin-empty-state h2 {
@@ -5933,6 +5819,14 @@ html[data-theme="dark"] .telegram-message-count .is-invalid {
   font-size: 14px;
   font-weight: 500;
   line-height: 1;
+}
+
+.admin-topbar-actions .admin-segmented-toggle {
+  padding: 2px;
+}
+
+.admin-topbar-actions .admin-segmented-toggle button {
+  min-height: 30px;
 }
 
 .admin-segmented-toggle button.is-active {
@@ -6833,8 +6727,8 @@ html[data-theme="dark"] .telegram-message-count .is-invalid {
 .auth-card .auth-inline-status {
   color: var(--muted);
   font-size: 14px;
-  font-weight: 400;
-  line-height: 1.4;
+  font-weight: 500;
+  line-height: 1;
   text-align: right;
 }
 
@@ -7982,6 +7876,7 @@ html[data-theme="dark"] .admin-workspace .link-check-table th {
   .admin-filter-row .admin-category-filter {
     width: 100%;
     min-width: 0;
+    max-width: none;
   }
 
   .admin-search-row {
@@ -8610,8 +8505,6 @@ button.content-source-item {
 .skeleton-layout-mask .content-source-copy strong,
 .skeleton-layout-mask .content-source-copy small,
 .skeleton-layout-mask .content-item-meta span,
-.skeleton-layout-mask .telegram-push-record-icon,
-.skeleton-layout-mask .telegram-push-record-meta span,
 .skeleton-layout-mask label > span,
 .skeleton-layout-mask label > small {
   color: transparent !important;
@@ -8673,8 +8566,6 @@ button.content-source-item {
 .admin-workspace .skeleton-layout-mask .content-source-copy strong,
 .admin-workspace .skeleton-layout-mask .content-source-copy small,
 .admin-workspace .skeleton-layout-mask .content-item-meta span,
-.admin-workspace .skeleton-layout-mask .telegram-push-record-icon,
-.admin-workspace .skeleton-layout-mask .telegram-push-record-meta span,
 .admin-workspace .skeleton-layout-mask label > span,
 .admin-workspace .skeleton-layout-mask label > small,
 .admin-workspace .skeleton-layout-mask input,
@@ -8730,8 +8621,6 @@ html[data-theme="dark"] .admin-workspace .skeleton-layout-mask .admin-tool-title
 html[data-theme="dark"] .admin-workspace .skeleton-layout-mask .content-source-copy strong,
 html[data-theme="dark"] .admin-workspace .skeleton-layout-mask .content-source-copy small,
 html[data-theme="dark"] .admin-workspace .skeleton-layout-mask .content-item-meta span,
-html[data-theme="dark"] .admin-workspace .skeleton-layout-mask .telegram-push-record-icon,
-html[data-theme="dark"] .admin-workspace .skeleton-layout-mask .telegram-push-record-meta span,
 html[data-theme="dark"] .admin-workspace .skeleton-layout-mask label > span,
 html[data-theme="dark"] .admin-workspace .skeleton-layout-mask label > small,
 html[data-theme="dark"] .admin-workspace .skeleton-layout-mask input,
@@ -8809,8 +8698,7 @@ html[data-theme="dark"] .admin-workspace .content-flow-skeleton .content-source-
 }
 
 .content-flow-empty {
-  align-self: center;
-  justify-self: center;
+  align-self: start;
   border: 0;
   background: transparent;
 }

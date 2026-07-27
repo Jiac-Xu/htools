@@ -22,7 +22,7 @@ const MAX_PAGE_LIMIT = 100;
 const MAX_SEARCH_LENGTH = 100;
 const MAX_CURSOR_LENGTH = 1024;
 
-type ArticleSortMode = "latest" | "name";
+type ArticleSortMode = "latest" | "oldest";
 type AdminArticlePageRow = ArticleSummaryRow & { sort_key: string };
 type AdminArticleCursor = {
   sort: ArticleSortMode;
@@ -43,7 +43,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     const category = (url.searchParams.get("category") ?? "").trim().slice(0, 48);
     const query = (url.searchParams.get("q") ?? "").trim().slice(0, MAX_SEARCH_LENGTH);
     const sort: ArticleSortMode =
-      url.searchParams.get("sort") === "name" ? "name" : "latest";
+      url.searchParams.get("sort") === "oldest" ? "oldest" : "latest";
     const limit = readPageInteger(url.searchParams.get("limit"));
     const cursor = parseCursor(url.searchParams.get("cursor"), sort);
     const terms = query ? createSearchTerms(query) : null;
@@ -129,20 +129,19 @@ async function loadAdminArticlePage(
 
   const countConditions = [...conditions];
   const countParams = [...params];
-  const sortExpression =
-    sort === "name" ? "title" : "COALESCE(published_at, updated_at, created_at)";
+  const sortExpression = "COALESCE(published_at, updated_at, created_at)";
 
   if (cursor) {
-    if (sort === "name") {
-      conditions.push("(title, id) > (?, ?)");
-      params.push(cursor.sortKey, cursor.id);
+    if (sort === "oldest") {
+      conditions.push(
+        `(${sortExpression} > ? OR (${sortExpression} = ? AND id > ?))`
+      );
     } else {
       conditions.push(
-        `(COALESCE(published_at, updated_at, created_at) < ? OR
-          (COALESCE(published_at, updated_at, created_at) = ? AND id < ?))`
+        `(${sortExpression} < ? OR (${sortExpression} = ? AND id < ?))`
       );
-      params.push(cursor.sortKey, cursor.sortKey, cursor.id);
     }
+    params.push(cursor.sortKey, cursor.sortKey, cursor.id);
   }
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -150,7 +149,7 @@ async function loadAdminArticlePage(
     ? `WHERE ${countConditions.join(" AND ")}`
     : "";
   const orderClause =
-    sort === "name" ? "sort_key ASC, id ASC" : "sort_key DESC, id DESC";
+    sort === "oldest" ? "sort_key ASC, id ASC" : "sort_key DESC, id DESC";
   const [result, searchedTotalRow, categoryCountRows] = await Promise.all([
     db.prepare(
       `SELECT id, slug, title, summary, cover_image, category, tags,

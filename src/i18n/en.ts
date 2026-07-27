@@ -53,36 +53,6 @@ export const en: Messages = {
     termsDescription:
       "Review the rules that apply when using this site's directory, articles, and submission features."
   },
-  aboutPage: {
-    title: "About Me",
-    greeting: "Hi!",
-    intro:
-      "I am an indie developer, and I once wasted too much time looking for tools.",
-    pain:
-      "You have probably run into this too: you have a good idea and are ready to start, only to spend half a day choosing frameworks, finding icons, and setting up analytics before writing a single line of code.",
-    reason: "That is why I built HTools.",
-    whatTitle: "What is HTools?",
-    whatIntro:
-      "Plainly speaking, it is my toolbox. If something is useful, I share it with everyone. Nothing grand, just practical.",
-    collectIntro:
-      "The site collects tools from development to launch, organizes them by category, and lets you find what you need at a glance:",
-    devTools: "Developer tools - for writing code",
-    designResources: "Design resources - make products look better",
-    growthTools: "Growth tools - help more people know your product",
-    communityContrib: "Community contributions - good things recommended by other developers",
-    helpIntro: "If this site saves you time, you can:",
-    share: "Share it with friends - let more indie developers know",
-    recommend: "Recommend tools - tell me what tools you find useful",
-    feedback: "Give feedback - say directly what is not easy to use",
-    githubStar: "Star it on GitHub - placeholder link",
-    twitterFollow: "Follow on Twitter - placeholder link",
-    closing: "That is it. Let us make and use useful things together.",
-    productLinksTitle: "Product Links",
-    author: "Author",
-    official: "Official",
-    github: "Github",
-    twitter: "Twitter",
-  },
   actions: {
     submitTool: "Submit Tool",
     toggleTheme: "Toggle theme",
@@ -217,10 +187,13 @@ export const en: Messages = {
     searchPlaceholder: "Search tools...",
     manageTools: "Manage tools",
     sortLatest: "Latest first",
-    sortName: "Name sort",
+    sortOldest: "Oldest first",
+    sortLatestShort: "New",
+    sortOldestShort: "Old",
     emptyTitle: "No matching tools",
     emptyDescription: "Try another search term or refresh the tool list.",
     password: "Password",
+    passwordRequired: "Enter the password",
     turnstileRequired: "Complete the verification first.",
     turnstileServerFailed: "The verification service is temporarily unavailable. Try again later.",
     tableTool: "Tool",

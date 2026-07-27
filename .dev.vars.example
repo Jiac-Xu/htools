@@ -6,3 +6,9 @@ GITHUB_TOKEN=github_pat_your_read_only_token
 # Create a Turnstile site, configure both values, then enable the service in the admin dashboard.
 TURNSTILE_SITE_KEY=
 TURNSTILE_SECRET_KEY=
+
+# Optional Telegram push for tools and articles.
+# Create a bot with @BotFather, invite it to the target chat or channel, then enable the service in the admin dashboard.
+# TGID accepts a numeric chat id (for example -1001234567890) or a public @channel name.
+TGTOKEN=
+TGID=

@@ -54,32 +54,6 @@ export type Messages = {
     privacyDescription: string;
     termsDescription: string;
   };
-  aboutPage: {
-    title: string;
-    greeting: string;
-    intro: string;
-    pain: string;
-    reason: string;
-    whatTitle: string;
-    whatIntro: string;
-    collectIntro: string;
-    devTools: string;
-    designResources: string;
-    growthTools: string;
-    communityContrib: string;
-    helpIntro: string;
-    share: string;
-    recommend: string;
-    feedback: string;
-    githubStar: string;
-    twitterFollow: string;
-    closing: string;
-    productLinksTitle: string;
-    author: string;
-    official: string;
-    github: string;
-    twitter: string;
-  };
   actions: {
     submitTool: string;
     toggleTheme: string;
@@ -204,10 +178,13 @@ export type Messages = {
     searchPlaceholder: string;
     manageTools: string;
     sortLatest: string;
-    sortName: string;
+    sortOldest: string;
+    sortLatestShort: string;
+    sortOldestShort: string;
     emptyTitle: string;
     emptyDescription: string;
     password: string;
+    passwordRequired: string;
     turnstileRequired: string;
     turnstileServerFailed: string;
     tableTool: string;

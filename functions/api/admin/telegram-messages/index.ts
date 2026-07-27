@@ -24,7 +24,8 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
           ? limitValue
           : undefined,
         query: url.searchParams.get("q") ?? "",
-        resourceType
+        resourceType,
+        sort: url.searchParams.get("sort") === "oldest" ? "oldest" : "latest"
       })
     );
   } catch (error) {
