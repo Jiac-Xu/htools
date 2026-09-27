@@ -1,38 +1,43 @@
-import { createArticleBrowseHref } from "./admin-display";
+import {
+  createArticleBrowseHref,
+  getContentItemPreviewImage
+} from "./admin-display";
+import { ADMIN_RESOURCE_FIELD_EXAMPLES } from "./admin-field-examples";
+import { getArticleDisplayTitle } from "./article-helpers";
 import { createToolPreviewSource } from "./tool-helpers";
-import type { ArticleSummary, TelegramPushResource, Tool } from "./types";
+import type {
+  ArticleSummary,
+  ContentItemSummary,
+  TelegramPushResource,
+  Tool
+} from "./types";
 import type { Locale } from "./i18n";
+import { getEffectiveTags } from "../shared/effective-tags";
 
 export type { TelegramPushResource } from "./types";
 
 export const TELEGRAM_MESSAGE_LIMIT = 4096;
+export const TELEGRAM_PHOTO_CAPTION_LIMIT = 1024;
 const TELEGRAM_SECTION_SEPARATOR = "\n\n";
 
-const TELEGRAM_CUSTOM_BODY_EXAMPLE_ZH = [
-  "**在这里写推送标题**",
-  "",
-  "> 在这里写简介，一两句话说清楚这条推送是什么、值得看什么。",
-  "",
-  "项目地址：https://github.com/shaoyouvip/htools",
-  "",
-  "演示地址：https://htools.zrf.me/",
-  "",
-  "#导航 #工具"
-].join("\n");
+type TelegramBodyFieldPatch = {
+  title?: string;
+  description?: string;
+  url?: string;
+  demoUrl?: string;
+  tags?: string[];
+  resourceType?: TelegramPushResource["type"];
+};
 
-const TELEGRAM_CUSTOM_BODY_EXAMPLE_EN = [
-  "**Write the push title here**",
-  "",
-  "> Write the summary here — one or two sentences on what this push is and why it is worth reading.",
-  "",
-  "Repository: https://github.com/shaoyouvip/htools",
-  "",
-  "Demo: https://htools.zrf.me/",
-  "",
-  "#Directory #Tools"
-].join("\n");
+export type TelegramBodyFields = {
+  title: string;
+  description: string;
+  url: string;
+  demoUrl: string;
+  tags: string[];
+};
 
-export function readTelegramBodyTitle(markdown: string) {
+function readTelegramBodyTitle(markdown: string) {
   const firstLine = markdown.split("\n").find((line) => line.trim()) ?? "";
   return firstLine
     .trim()
@@ -41,19 +46,253 @@ export function readTelegramBodyTitle(markdown: string) {
     .trim();
 }
 
-export function replaceTelegramBodyTitle(markdown: string, title: string) {
-  const heading = title.trim() ? `**${title.trim()}**` : "";
-  const lines = markdown.split("\n");
-  const index = lines.findIndex((line) => line.trim());
-  if (index === -1) return heading;
-  lines[index] = heading;
-  return lines.join("\n");
+export function createTelegramCustomBodyExample(locale: "zh" | "en") {
+  const examples = ADMIN_RESOURCE_FIELD_EXAMPLES[locale];
+  const labels = locale === "zh"
+    ? { title: "在这里写推送标题", project: "项目地址", demo: "演示地址" }
+    : { title: "Write the push title here", project: "Project", demo: "Demo" };
+  const tags = examples.tags
+    .split(/\s*[,，、;；]\s*/)
+    .map(toTelegramHashtag)
+    .filter(Boolean)
+    .join(" ");
+
+  return [
+    `**${labels.title}**`,
+    "",
+    `> ${examples.description.replace(/^例如[:：]\s*|^Example:\s*/i, "")}`,
+    "",
+    `${labels.project}：[${examples.url}](${examples.url})`,
+    "",
+    `${labels.demo}：[${examples.demoUrl}](${examples.demoUrl})`,
+    "",
+    tags
+  ].join("\n");
 }
 
-export function createTelegramCustomBodyExample(locale: "zh" | "en") {
-  return locale === "en"
-    ? TELEGRAM_CUSTOM_BODY_EXAMPLE_EN
-    : TELEGRAM_CUSTOM_BODY_EXAMPLE_ZH;
+export function syncTelegramBodyField(
+  markdown: string,
+  patch: TelegramBodyFieldPatch,
+  footerMarkdown: string,
+  locale: "zh" | "en"
+) {
+  const footer = footerMarkdown.trim();
+  let body = markdown.trim();
+  if (footer && body.endsWith(footer)) {
+    body = body.slice(0, body.length - footer.length).trim();
+  }
+
+  let lines = body ? body.split("\n") : [];
+  if (Object.prototype.hasOwnProperty.call(patch, "title")) {
+    lines = replaceTelegramTitleLines(lines, patch.title ?? "");
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "description")) {
+    lines = replaceTelegramDescriptionLines(lines, patch.description ?? "");
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "url")) {
+    const label = locale === "zh"
+      ? patch.resourceType === "article" ? "文章地址" : "项目地址"
+      : patch.resourceType === "article"
+        ? "Article"
+        : "Project";
+    lines = replaceTelegramLabeledLine(
+      lines,
+      /^(项目地址|文章地址|本站浏览|Project|Article|Site View|Repository)[：:]/i,
+      createTelegramUrlLine(
+        label,
+        patch.resourceType === "content" ? "" : patch.url ?? ""
+      ),
+      /^(演示地址|原文地址|Demo|Original)[：:]/i
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "demoUrl")) {
+    const label = locale === "zh"
+      ? patch.resourceType === "content" ? "原文地址" : "演示地址"
+      : patch.resourceType === "content" ? "Original" : "Demo";
+    lines = replaceTelegramLabeledLine(
+      lines,
+      /^(演示地址|原文地址|Demo|Original)[：:]/i,
+      createTelegramUrlLine(label, patch.demoUrl ?? ""),
+      /^#[^\s#]+(?:\s+#[^\s#]+)*$/
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "tags")) {
+    const hashtags = (patch.tags ?? [])
+      .map(toTelegramHashtag)
+      .filter(Boolean)
+      .join(" ");
+    lines = replaceTelegramLabeledLine(
+      lines,
+      /^#[^\s#]+(?:\s+#[^\s#]+)*$/,
+      hashtags
+    );
+  }
+
+  body = normalizeTelegramBodyLines(lines);
+  return [body, footer].filter(Boolean).join(TELEGRAM_SECTION_SEPARATOR);
+}
+
+export function readTelegramBodyFields(
+  markdown: string,
+  footerMarkdown: string,
+  locale: "zh" | "en",
+  ignoreExamples = false
+): TelegramBodyFields {
+  const footer = footerMarkdown.trim();
+  let body = markdown.trim();
+  if (footer && body.endsWith(footer)) {
+    body = body.slice(0, body.length - footer.length).trim();
+  }
+
+  const lines = body.split("\n");
+  const titleLine = lines.find((line) => line.trim())?.trim() ?? "";
+  const title = /^\*\*[^*]+\*\*$/.test(titleLine) || /^#{1,6}\s+/.test(titleLine)
+    ? readTelegramBodyTitle(titleLine)
+    : "";
+  const descriptionLines: string[] = [];
+  let readingDescription = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^>/.test(trimmed)) {
+      readingDescription = true;
+      descriptionLines.push(trimmed.replace(/^>\s?/, ""));
+    } else if (readingDescription) {
+      break;
+    }
+  }
+
+  const url = readTelegramLabeledUrl(
+    lines,
+    /^(项目地址|文章地址|本站浏览|Project|Article|Site View|Repository)[：:]/i
+  );
+  const demoUrl = readTelegramLabeledUrl(
+    lines,
+    /^(演示地址|原文地址|Demo|Original)[：:]/i
+  );
+  const hashtagLine = lines.find((line) =>
+    /^#[^\s#]+(?:\s+#[^\s#]+)*$/.test(line.trim())
+  )?.trim() ?? "";
+  const tags = hashtagLine
+    ? hashtagLine.split(/\s+/).map((tag) => tag.replace(/^#/, "")).filter(Boolean)
+    : [];
+  const fields = {
+    title,
+    description: descriptionLines.join("\n").trim(),
+    url,
+    demoUrl,
+    tags
+  };
+
+  if (!ignoreExamples) return fields;
+
+  const examples = ADMIN_RESOURCE_FIELD_EXAMPLES[locale];
+  const exampleTitle = locale === "zh"
+    ? "在这里写推送标题"
+    : "Write the push title here";
+  const exampleDescription = examples.description.replace(
+    /^例如[:：]\s*|^Example:\s*/i,
+    ""
+  );
+  const exampleTags = examples.tags
+    .split(/\s*[,，、;；]\s*/)
+    .filter(Boolean);
+
+  return {
+    title: fields.title === exampleTitle ? "" : fields.title,
+    description: fields.description === exampleDescription ? "" : fields.description,
+    url: fields.url === examples.url ? "" : fields.url,
+    demoUrl: fields.demoUrl === examples.demoUrl ? "" : fields.demoUrl,
+    tags: fields.tags.length === exampleTags.length &&
+      fields.tags.every((tag, index) => tag === exampleTags[index])
+      ? []
+      : fields.tags
+  };
+}
+
+function replaceTelegramTitleLines(lines: string[], title: string) {
+  const next = [...lines];
+  const index = next.findIndex((line) => line.trim());
+  if (!title.trim()) {
+    if (index >= 0 && (/^\*\*[^*]+\*\*$/.test(next[index].trim()) || /^#{1,6}\s+/.test(next[index].trim()))) {
+      next.splice(index, 1);
+    }
+    return next;
+  }
+  const heading = `**${title.trim()}**`;
+  if (index === -1) return heading ? [heading] : [];
+  next[index] = heading;
+  return next;
+}
+
+function replaceTelegramDescriptionLines(lines: string[], description: string) {
+  const next = [...lines];
+  const titleIndex = next.findIndex((line) => line.trim());
+  let start = titleIndex + 1;
+  while (start < next.length && !next[start].trim()) start += 1;
+  let end = start;
+  while (end < next.length && /^>/.test(next[end].trim())) end += 1;
+  const quoteLines = description.trim() ? toTelegramQuoteBlock(description).split("\n") : [];
+
+  if (start < next.length && /^>/.test(next[start].trim())) {
+    next.splice(start, end - start, ...quoteLines);
+  } else if (quoteLines.length) {
+    next.splice(start, 0, ...quoteLines, "");
+  }
+  return next;
+}
+
+function replaceTelegramLabeledLine(
+  lines: string[],
+  matcher: RegExp,
+  replacement: string,
+  beforeMatcher?: RegExp
+) {
+  const next = [...lines];
+  const index = next.findIndex((line) => matcher.test(line.trim()));
+  if (index >= 0) {
+    if (replacement) next[index] = replacement;
+    else next.splice(index, 1);
+    return next;
+  }
+  if (!replacement) return next;
+
+  const beforeIndex = beforeMatcher
+    ? next.findIndex((line) => beforeMatcher.test(line.trim()))
+    : -1;
+  const insertIndex = beforeIndex >= 0 ? beforeIndex : next.length;
+  next.splice(insertIndex, 0, replacement, "");
+  return next;
+}
+
+function createTelegramUrlLine(label: string, url: string) {
+  const normalized = url.trim();
+  return normalized ? `${label}：[${normalized}](${normalized})` : "";
+}
+
+function readTelegramLabeledUrl(lines: string[], matcher: RegExp) {
+  const line = lines.find((candidate) => matcher.test(candidate.trim()))?.trim() ?? "";
+  const markdownLink = line.match(/\[[^\]]*]\((https?:\/\/[^)\s]+)\)/i);
+  if (markdownLink?.[1]) return markdownLink[1];
+  return line.match(/https?:\/\/\S+/i)?.[0]?.replace(/[),.;，。；]+$/, "") ?? "";
+}
+
+function normalizeTelegramBodyLines(lines: string[]) {
+  return lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function normalizeTelegramFooterMarkdown(value: string) {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .replace(
+      /(^|[\s｜|])([^\[\]\n()｜|]+?)\s*\((https?:\/\/[^)\s]+)\)/g,
+      (_, prefix: string, label: string, url: string) =>
+        `${prefix}[${label.trim()}](${url})`
+    )
+    .replace(/\s*｜\s*/g, " ｜ ")
+    .trim();
 }
 
 export function createTelegramToolResource(tool: Tool): TelegramPushResource {
@@ -65,7 +304,8 @@ export function createTelegramToolResource(tool: Tool): TelegramPushResource {
     url: tool.url,
     demoUrl: tool.demoUrl,
     image: createToolPreviewSource(tool),
-    tags: tool.tags
+    category: "",
+    tags: getEffectiveTags(tool.tags, tool.category)
   };
 }
 
@@ -78,13 +318,30 @@ export function createTelegramArticleResource(
     id: article.id,
     title: article.title,
     description: article.summary,
-    url: resolveTelegramResourceUrl(
-      createArticleBrowseHref(article.slug, article.published),
-      origin
-    ),
+    url: article.published
+      ? resolveTelegramResourceUrl(createArticleBrowseHref(article.slug, true), origin)
+      : "",
     demoUrl: "",
     image: resolveTelegramResourceUrl(article.coverImage, origin),
-    tags: Array.from(new Set([article.category, ...article.tags].filter(Boolean)))
+    category: "",
+    tags: getEffectiveTags(article.tags, article.category)
+  };
+}
+
+export function createTelegramContentResource(
+  item: ContentItemSummary,
+  origin: string
+): TelegramPushResource {
+  return {
+    type: "content",
+    id: item.id,
+    title: getArticleDisplayTitle(item),
+    description: item.summary,
+    url: "",
+    demoUrl: resolveTelegramResourceUrl(item.url, origin),
+    image: resolveTelegramResourceUrl(getContentItemPreviewImage(item), origin),
+    category: "",
+    tags: getEffectiveTags(item.tags, item.category)
   };
 }
 
@@ -110,22 +367,37 @@ export function buildTelegramPreviewMarkdown(
   locale: "zh" | "en"
 ) {
   const labels = locale === "zh"
-    ? { article: "文章地址", project: "项目地址", demo: "演示地址" }
-    : { article: "Article", project: "Project", demo: "Demo" };
-  const tags = resource.tags.map(toTelegramHashtag).filter(Boolean).join(" ");
+    ? {
+        article: "文章地址",
+        project: "项目地址",
+        demo: "演示地址",
+        original: "原文地址"
+      }
+    : {
+        article: "Article",
+        project: "Project",
+        demo: "Demo",
+        original: "Original"
+      };
+  const editableBody = bodyMarkdown.trim();
+  const tags = resource.type === "custom"
+    ? ""
+    : resource.tags.map(toTelegramHashtag).filter(Boolean).join(" ");
   const linkLabel = resource.type === "article" ? labels.article : labels.project;
+  const demoLabel = resource.type === "content" ? labels.original : labels.demo;
+  const resourceUrl = resource.type === "content" ? "" : resource.url;
 
   return [
-    bodyMarkdown.trim(),
-    resource.url ? `${linkLabel}：${resource.url}` : "",
-    resource.demoUrl ? `${labels.demo}：${resource.demoUrl}` : "",
+    editableBody,
+    resourceUrl ? `${linkLabel}：[${resourceUrl}](${resourceUrl})` : "",
+    resource.demoUrl ? `${demoLabel}：[${resource.demoUrl}](${resource.demoUrl})` : "",
     tags,
     footerMarkdown.trim()
   ].filter(Boolean).join(TELEGRAM_SECTION_SEPARATOR);
 }
 
 export function createTelegramResourceMediaUrl(resource: TelegramPushResource) {
-  if (resource.type === "article") return resource.image;
+  if (resource.type === "article" || resource.type === "content") return resource.image;
   if (resource.image) return resource.image;
   return resource.url
     ? `https://image.thum.io/get/width/1200/crop/720/${resource.url}`
@@ -136,31 +408,35 @@ export function countTelegramMessageCharacters(value: string) {
   return Array.from(value).length;
 }
 
+export function escapeTelegramPreviewHashtags(value: string) {
+  return value.replace(
+    /(^|\n)([ \t]*)(#[^\s#]+(?:[ \t]+#[^\s#]+)*)(?=\n|$)/g,
+    (_match, lineStart: string, indentation: string, hashtags: string) =>
+      `${lineStart}${indentation}\\${hashtags}`
+  );
+}
+
 export function getTelegramText(locale: Locale) {
   return locale === "zh"
     ? {
-      action: "Telegram 推送",
+      action: "消息推送",
       title: "Telegram 推送",
       management: {
         nav: "消息推送",
         title: "消息推送",
         addPush: "添加推送",
-        typeCustom: "手动添加",
-        searchPlaceholder: "搜索推送内容...",
-        filterAll: "全部",
-        filterTools: "工具",
-        filterArticles: "文章",
+        searchPlaceholder: "搜索推送",
         typeTool: "工具库",
         typeArticle: "文章管理",
+        typeContent: "订阅内容",
         statusPushed: "已推送",
-        statusNotPushed: "未推送",
+        pushedNotice: "此消息已推送，无法恢复为草稿；如需修改，请使用“编辑推送”。",
         pushAction: "推送到 Telegram",
         pushConfirmTitle: "推送到 Telegram？",
         pushConfirmDescription: "发出后仍可以继续编辑内容并更新到同一条消息，但无法退回草稿状态。",
-        resourceDeleted: "原内容已删除",
-        linkUnavailable: "没有关联地址",
+        resourceDeleted: "来源已删除",
         emptyTitle: "还没有推送",
-        emptyDescription: "自己写一条消息推送到 Telegram，或者从工具库、文章管理卡片推送",
+        emptyDescription: "自己写一条消息推送到 Telegram，或者从工具库、文章管理、订阅内容卡片推送",
         noMatchTitle: "没有匹配的推送",
         noMatchDescription: "换个类型或搜索词再试。",
         loadMore: "加载更多",
@@ -174,7 +450,7 @@ export function getTelegramText(locale: Locale) {
         deleted: "推送记录已删除。",
         serviceDisabled: "Telegram 推送当前已关闭，开启后才能编辑消息。",
         serviceDisabledTitle: "Telegram 推送未开启",
-        serviceDisabledDescription: "在系统设置里配置并开启 Telegram 推送后，就能在这里撰写消息，也能从工具库、文章管理的卡片推送。",
+        serviceDisabledDescription: "在系统设置里配置并开启 Telegram 推送后，就能在这里撰写消息，也能从工具库、文章管理、订阅内容卡片推送。",
         serviceDisabledAction: "去系统设置"
       },
         quickPush: {
@@ -183,66 +459,71 @@ export function getTelegramText(locale: Locale) {
           modeLabel: "推送方式",
           sendLabel: "直接推送",
           draftLabel: "存为草稿",
-          goManage: "去消息推送"
+          sendAction: "消息推送",
+          draftAction: "保存草稿",
+          goManage: "消息推送"
         },
-      description: "编辑当前内容的 Telegram 推送信息，固定消息尾巴由系统自动附加。",
-        customDescription: "自己写一条推送发到 Telegram，不绑定工具或文章；固定消息尾巴由系统自动附加。",
+        description: "编辑当前内容的 Telegram 推送信息，固定消息尾巴由系统自动附加。",
+        customDescription: "自己写一条推送发到 Telegram，不绑定工具、文章或订阅内容；固定消息尾巴由系统自动附加。",
         customTitleLabel: "推送标题",
-        customTitlePlaceholder: "只用于在推送管理里区分记录",
-        statuses: {
-          not_pushed: "未推送",
-          pending: "已推送",
-          synced: "已推送"
-        },
-        messageNotFound: "原 Telegram 消息已不存在。清除旧消息记录后，可以手动重新推送。",
-        targetChanged: "Telegram 发送目标已经改变。请重新建立推送，再将当前内容手动推送到新目标。",
-        permissionDenied: "机器人当前没有发送或编辑目标消息的权限，请先调整 Telegram 权限后重试。",
-        recoverMessage: "重新建立推送",
-        recovered: "旧消息记录已清除，请手动重新推送。",
+        categoryLabel: "推送分类",
+        syncSource: "同步来源",
+        syncSourceHint: "同步关联工具、文章或订阅内容的最新信息，当前编辑内容将被覆盖。",
+        syncSourceConfirmTitle: "同步来源？",
+        syncSourceConfirmDescription: "将用关联内容的最新信息覆盖当前推送标题、简介、链接、标签、正文和图片地址。",
+        contentOriginalUrlLabel: "原文地址",
+        contentOriginalUrlPlaceholder: "https://example.com/article",
+        articleUrlPlaceholder: "https://example.com/articles/article-name",
+        bodyPlaceholder: "在这里编写 Telegram Markdown 正文",
+        targetChanged: "Telegram 发送目标已经改变，点击更新推送可确认是否推送到新目标。",
+        resendDeletedTitle: "原消息已不存在",
+        resendDeletedDescription:
+          "原 Telegram 消息已不存在，这条推送已回到未推送状态。是否立即推送一条新消息？",
+        resendTargetChangedTitle: "发送目标已改变",
+        resendTargetChangedDescription:
+          "发送目标已改变，原消息保留在旧会话，这条推送已回到未推送状态。是否向新目标推送一条新消息？",
+        resendAction: "重新推送",
+        resendSkipped: "当前内容未推送到当前目标。",
         bodyLabel: "Markdown 正文",
-        restoreDefault: "恢复",
         previewTitle: "消息预览",
-        mediaLabel: "推送图片",
-        mediaEnabled: "开启图片",
-        mediaDisabled: "关闭图片",
-        mediaUrlLabel: "图片地址",
+        mediaEnabled: "已开启",
+        mediaDisabled: "已关闭",
+        mediaUrlLabel: "预览图",
         mediaUrlPlaceholder: "https://example.com/preview.png",
         mediaHelp: "开启后使用当前内容的预览图，可替换为其他公开图片地址。",
-        mediaInvalid: "发送图片时请填写有效的图片地址。",
-        fixedContent: "自动附加内容",
-        save: "保存",
-        send: "推送",
-        update: "更新",
+        mediaInvalid: "发送图片时请填写有效的图片地址",
+        save: "保存内容",
+        send: "消息推送",
+        update: "更新推送",
         saved: "Telegram 推送内容已保存。",
-        restored: "已恢复默认正文和图片设置。",
         sent: "已推送到 Telegram。",
         updated: "Telegram 推送已更新。",
+        uncertainRetryTitle: "确认重新推送？",
+        uncertainRetryDescription: "请先确认 Telegram 目标会话中没有收到这条消息。继续可能产生重复消息。",
+        uncertainRetryAction: "确认重试",
         loading: "正在加载消息预览。",
-        tooLong: "完整消息超过 Telegram 的 4096 字符限制。"
+        tooLong: "完整消息超过 Telegram 的 4096 字符限制。",
+        photoCaptionTooLong: "图片消息文字超过 Telegram 的 1024 字符限制。"
       }
     : {
-        action: "Telegram Push",
+        action: "Message Push",
         title: "Telegram Push",
         management: {
           nav: "Message Push",
           title: "Message Push",
           addPush: "Add Push",
-          typeCustom: "Manual",
-          searchPlaceholder: "Search pushes...",
-          filterAll: "All",
-          filterTools: "Tools",
-          filterArticles: "Articles",
+          searchPlaceholder: "Search pushes",
           typeTool: "Tool Library",
           typeArticle: "Articles",
+          typeContent: "Subscription Content",
           statusPushed: "Pushed",
-          statusNotPushed: "Not pushed",
+          pushedNotice: "This message has already been pushed and cannot return to draft. Use Edit Push to make changes.",
           pushAction: "Push to Telegram",
           pushConfirmTitle: "Push to Telegram?",
           pushConfirmDescription: "After sending you can still edit the content and update the same message, but it cannot go back to draft.",
-          resourceDeleted: "Original content deleted",
-          linkUnavailable: "No linked address",
+          resourceDeleted: "Source deleted",
           emptyTitle: "No pushes yet",
-          emptyDescription: "Write a message and push it to Telegram, or push from a Tool Library or Articles card.",
+          emptyDescription: "Write a message and push it to Telegram, or push from a Tool Library, Articles, or Subscription Content card.",
           noMatchTitle: "No matching pushes",
           noMatchDescription: "Try another type or search term.",
           loadMore: "Load More",
@@ -256,7 +537,7 @@ export function getTelegramText(locale: Locale) {
           deleted: "Push record deleted.",
           serviceDisabled: "Telegram pushing is disabled. Enable it before editing messages.",
           serviceDisabledTitle: "Telegram pushing is off",
-          serviceDisabledDescription: "Configure and enable Telegram pushing in System Settings to write messages here and push from Tool Library or Articles cards.",
+          serviceDisabledDescription: "Configure and enable Telegram pushing in System Settings to write messages here and push from Tool Library, Articles, or Subscription Content cards.",
           serviceDisabledAction: "Open System Settings"
         },
         quickPush: {
@@ -265,42 +546,51 @@ export function getTelegramText(locale: Locale) {
           modeLabel: "Push mode",
           sendLabel: "Push now",
           draftLabel: "Save draft",
-          goManage: "Open Message Push"
+          sendAction: "Push Message",
+          draftAction: "Save Draft",
+          goManage: "Message Push"
         },
         description: "Edit the current Telegram message; the fixed message footer is appended automatically.",
-        customDescription: "Write a standalone Telegram push that is not tied to a tool or article. The fixed message footer is appended automatically.",
+        customDescription: "Write a standalone Telegram push that is not tied to a tool, article, or content item. The fixed message footer is appended automatically.",
         customTitleLabel: "Push title",
-        customTitlePlaceholder: "Only used to identify the record here",
-        statuses: {
-          not_pushed: "Not pushed",
-          pending: "Pushed",
-          synced: "Pushed"
-        },
-        messageNotFound: "The original Telegram message no longer exists. Clear its old record, then push it manually again.",
-        targetChanged: "The Telegram target has changed. Rebuild the push, then send the current content to the new target manually.",
-        permissionDenied: "The bot cannot send or edit the target message. Update its Telegram permissions, then try again.",
-        recoverMessage: "Rebuild Push",
-        recovered: "The old message record was cleared. Push the content manually again.",
+        categoryLabel: "Push category",
+        syncSource: "Sync Source",
+        syncSourceHint: "Sync the latest information from the linked tool, article, or content item. Your current edits will be overwritten.",
+        syncSourceConfirmTitle: "Sync source?",
+        syncSourceConfirmDescription: "Replace the current push title, description, links, tags, body, and image URL with the latest linked content.",
+        contentOriginalUrlLabel: "Original URL",
+        contentOriginalUrlPlaceholder: "https://example.com/article",
+        articleUrlPlaceholder: "https://example.com/articles/article-name",
+        bodyPlaceholder: "Write the Telegram Markdown content here",
+        targetChanged: "The Telegram target has changed. Use Update Push to confirm sending to the new target.",
+        resendDeletedTitle: "Original message is gone",
+        resendDeletedDescription:
+          "The original Telegram message no longer exists, so this push is back to not pushed. Push a new message now?",
+        resendTargetChangedTitle: "Delivery target changed",
+        resendTargetChangedDescription:
+          "The delivery target changed and the original message stays in the previous chat, so this push is back to not pushed. Push a new message to the new target?",
+        resendAction: "Push again",
+        resendSkipped: "The current content is not pushed to the current target.",
         bodyLabel: "Markdown content",
-        restoreDefault: "Reset",
         previewTitle: "Message preview",
-        mediaLabel: "Push image",
-        mediaEnabled: "Enable image",
-        mediaDisabled: "Disable image",
-        mediaUrlLabel: "Image URL",
+        mediaEnabled: "Enabled",
+        mediaDisabled: "Disabled",
+        mediaUrlLabel: "Preview image",
         mediaUrlPlaceholder: "https://example.com/preview.png",
         mediaHelp: "When enabled, uses the current item's preview image; replace it with another public image URL if needed.",
         mediaInvalid: "Enter a valid image URL when image sending is enabled.",
-        fixedContent: "Automatically appended",
-        save: "Save",
-        send: "Push",
-        update: "Update",
+        save: "Save Content",
+        send: "Push Message",
+        update: "Update Push",
         saved: "Telegram push content saved.",
-        restored: "Default content and image settings restored.",
         sent: "Pushed to the Telegram chat.",
         updated: "Telegram push updated.",
+        uncertainRetryTitle: "Retry this push?",
+        uncertainRetryDescription: "First confirm that the target Telegram chat did not receive this message. Continuing may create a duplicate.",
+        uncertainRetryAction: "Confirm Retry",
         loading: "Loading message preview.",
-        tooLong: "The complete message exceeds Telegram's 4096-character limit."
+        tooLong: "The complete message exceeds Telegram's 4096-character limit.",
+        photoCaptionTooLong: "The photo caption exceeds Telegram's 1024-character limit."
       };
 }
 

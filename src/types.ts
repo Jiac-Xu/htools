@@ -1,3 +1,18 @@
+import {
+  ADMIN_AI_DOCUMENT_EXTENSIONS,
+  ADMIN_AI_DOCUMENT_MAX_BYTES,
+  ADMIN_AI_MODELS,
+  type AdminAiModel,
+  type AdminAiTask
+} from "../shared/admin-ai";
+
+export {
+  ADMIN_AI_DOCUMENT_EXTENSIONS,
+  ADMIN_AI_DOCUMENT_MAX_BYTES,
+  ADMIN_AI_MODELS
+};
+export type { AdminAiModel, AdminAiTask };
+
 export type Tool = {
   id: string;
   name: string;
@@ -175,7 +190,7 @@ export type ContentSyncResponse = {
   nextOffset: number | null;
 };
 
-export type AdminCategoryScope = "tools" | "articles" | "content";
+export type AdminCategoryScope = "tools" | "articles" | "push" | "content";
 
 export type AdminCategorySettings = Record<AdminCategoryScope, string[]>;
 
@@ -249,9 +264,69 @@ export type TurnstileSettings = {
   enabled: boolean;
 };
 
+export type RssHubSettings = {
+  enabled: boolean;
+  baseUrl: string;
+};
+
+export type ImageBedUploadChannel =
+  | "telegram"
+  | "cfr2"
+  | "s3"
+  | "discord"
+  | "huggingface"
+  | "webdav";
+
+export type ImageBedUploadNameType =
+  | "default"
+  | "index"
+  | "origin"
+  | "short";
+
+export type ImageBedSettings = {
+  available: boolean;
+  enabled: boolean;
+  baseUrl: string;
+  uploadChannel: ImageBedUploadChannel;
+  channelName: string;
+  uploadNameType: ImageBedUploadNameType;
+  uploadFolder: string;
+};
+
+export type AdminImageUploadResult = {
+  url: string;
+  name: string;
+  size: number;
+  type: string;
+};
+
+export type AdminAiSettings = {
+  available: boolean;
+  enabled: boolean;
+  model: AdminAiModel;
+};
+
+export type AdminAiResult = {
+  task: AdminAiTask;
+  name?: string;
+  title?: string;
+  description?: string;
+  summary?: string;
+  tags?: string[];
+  githubRepository?: string;
+};
+
+export type AdminAiDocumentResult = {
+  name: string;
+  mimeType: string;
+  tokens: number;
+  markdown: string;
+};
+
 export type TelegramSettings = {
   available: boolean;
   enabled: boolean;
+  target: string;
   footerMarkdown: string;
 };
 
@@ -273,9 +348,17 @@ export type TelegramMessage = {
   mediaUrl: string;
   defaultBodyMarkdown: string;
   defaultMediaUrl: string;
+  resource: TelegramPushResource;
+  resourceExists: boolean;
+  /**
+   * Set when the stored push could not be edited in place: the admin deleted the
+   * message inside Telegram, or the delivery target changed. The record is reset to
+   * "not pushed" so the admin can decide whether to send a fresh message.
+   */
+  remoteMessageMissing?: "deleted" | "target-changed";
 };
 
-export type TelegramResourceType = "tool" | "article" | "custom";
+export type TelegramResourceType = "tool" | "article" | "content" | "custom";
 
 export type TelegramPushResource = {
   type: TelegramResourceType;
@@ -285,6 +368,7 @@ export type TelegramPushResource = {
   url: string;
   demoUrl: string;
   image: string;
+  category: string;
   tags: string[];
 };
 
@@ -305,10 +389,16 @@ export type TelegramPushRecord = {
 
 export type TelegramPushPage = {
   records: TelegramPushRecord[];
+  categoryOptions: string[];
   limit: number;
   hasMore: boolean;
   nextCursor: string | null;
-  total: number;
+};
+
+export type TelegramSourceState = {
+  resource: TelegramPushResource;
+  bodyMarkdown: string;
+  mediaUrl: string;
 };
 
 export type HomeHeroContent = {
@@ -383,6 +473,7 @@ export type BackupCounts = {
   articles: number;
   contentSources: number;
   contentItems: number;
+  telegramMessages: number;
   settings: number;
 };
 

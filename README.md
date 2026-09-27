@@ -1,6 +1,6 @@
 # HTools
 
-HTools 是一款部署在 Cloudflare Pages Functions + D1 上的开源工具导航站，可用于搭建工具库、文章页和内容流聚合后台。
+HTools 是一款运行于 Cloudflare Pages Functions + D1 的开源工具导航平台，集工具收录、文章管理、RSS 内容聚合与 Telegram 消息推送于一体，无需部署传统服务器。
 
 <p align="center">
   <a href="https://pages.cloudflare.com/"><img src="https://img.shields.io/badge/Cloudflare-F38020?logo=cloudflare&amp;logoColor=white&amp;labelColor=555" alt="Cloudflare" /></a>
@@ -26,11 +26,13 @@ HTools 是一款部署在 Cloudflare Pages Functions + D1 上的开源工具导�
 
 ## 功能
 
-- 前台提供工具分类、文章、工具提交和关于页面。
-- 后台集中管理工具、文章、RSS 内容源、分类和系统设置。
-- RSS 内容可临时浏览或转为站内文章，文章与关于页面支持 Markdown。
-- 用户可读取 GitHub 仓库信息并前往 GitHub 创建公开 Issue；后台也可自动补全仓库元数据。
-- 支持完整备份与恢复、公开工具订阅源及简体中文 / 英文界面。
+- **工具导航**：分类浏览、全站搜索、精选推荐与公开工具提交。
+- **内容管理**：文章与 RSS 订阅内容统一在后台管理，支持 Markdown 与转为站内文章。
+- **消息推送**：工具、文章、订阅内容与自定义消息可推送到 Telegram，并集中浏览和更新。
+- **GitHub 集成**：读取公开仓库信息，自动补全项目元数据。
+- **Workers AI**（可选）：生成简介、摘要与标签，常见文档转 Markdown。
+- **ImgBed 图床**（可选）：在后台直接上传图片并自动回填公开地址。
+- **数据与体验**：完整备份恢复、公开工具订阅源、简体中文 / 英文界面与深浅色主题。
 
 ## 部署
 
@@ -44,44 +46,34 @@ HTools 是一款部署在 Cloudflare Pages Functions + D1 上的开源工具导�
 ```
 
 4. 在 Cloudflare D1 新建数据库，例如 `htools`。
-5. 回到 Pages 项目设置，给 Functions 添加 D1 绑定：
-
-```txt
-变量名称：DB
-D1 数据库：选择你刚创建的数据库
-```
-
+5. 回到 Pages 项目设置，按下方“资源绑定”添加 `DB` 绑定；如需 Workers AI，同时添加 `AI` 绑定。
 6. 按下方环境变量表在 Pages 部署环境中添加需要的变量，并将标记为 Secret 的内容使用加密变量保存。
-
 7. 重新部署 Pages 项目。
 8. 打开 `/admin` 登录后台。
 
 首次访问 API 时会自动初始化或升级 D1 表结构，无需手动执行 Migration。数据库默认为空，可在后台导入默认订阅源或手动添加工具。
 
+## 资源绑定
+
+在 Pages 项目设置的 **Settings → Bindings** 中添加，绑定不是环境变量，不需要填写值：
+
+| 变量名称 | 必需 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `DB` | 是 | D1 数据库 | 选择你创建的 D1 数据库，用于存储工具、文章、订阅内容和设置。 |
+| `AI` | 否 | Workers AI | 启用后可在后台“服务设置”中选择模型并开启 AI 生成与文档转换。 |
+
 ## 环境变量
 
 项目实际读取的环境变量如下：
 
-| 变量 | 必需 | 建议类型 | 用途 |
+| 变量 | 必需 | 建议类型 | 说明 |
 | --- | --- | --- | --- |
 | `ADMIN_PASSWORD` | 是 | Secret | 后台登录密码和会话签名密钥，建议使用至少 12 位的独立强密码。 |
-| `GITHUB_TOKEN` | 否 | Secret | 后台添加或编辑工具时读取公开 GitHub 仓库信息，并提高 GitHub API 请求限额。 |
-| `TURNSTILE_SITE_KEY` | 否，需与私密密钥同时配置 | 普通变量 | Cloudflare Turnstile 站点密钥，供管理员登录页加载验证组件。 |
-| `TURNSTILE_SECRET_KEY` | 否，需与站点密钥同时配置 | Secret | Cloudflare Turnstile 私密密钥，供服务端验证人机验证结果。 |
-| `TGTOKEN` | 否，需与 `TGID` 同时配置 | Secret | 用于管理员手动推送工具或文章内容的 Telegram Bot Token。 |
-| `TGID` | 否，需与 `TGTOKEN` 同时配置 | 普通变量 | Telegram 接收目标；支持个人、私密群组、超级群组或频道数字 ID，也支持公开频道用户名。 |
-
-`GITHUB_TOKEN` 建议使用不含仓库写入、删除或管理权限的只读 Token。未配置时，后台改由管理员浏览器请求 GitHub 公开 API；前端提交页始终由访客浏览器直接请求，不会使用站点 Token。
-
-使用 Turnstile 时，需在 Cloudflare 添加部署域名并同时配置两个密钥，重新部署后在后台“服务设置”中开启。
-
-使用 Telegram 推送时，请先将机器人加入目标会话并授予发送消息权限；配置 `TGTOKEN` 和 `TGID` 后，重新部署并在后台“服务设置”中测试连接、设置固定 Markdown 消息尾巴并开启。所有推送都由管理员手动触发，新增、编辑、导入或同步内容不会自动发送。
-
-推送有两个入口：在工具或文章卡片上点 Telegram 图标，选择“直接推送”或“存为草稿”；或在后台“消息推送”页点“添加推送”，撰写一条不绑定工具与文章的消息。正文使用 Markdown 编写，发送前会转换成 Telegram 支持的 HTML，可用粗体、斜体、删除线、引用、代码和链接；**Markdown 标题会渲染为粗体，表格不受支持**，完整消息上限为 4096 字符。
-
-系统会预填工具预览图或文章封面，但图片发送默认关闭，文章没有封面时不会生成替代截图。点击“保存”只保存当前内容，点击“推送”或“更新”才会创建或修改 Telegram 消息。若原消息已被删除，可保留正文和图片并重新建立推送；权限不足时调整机器人权限后重试。
-
-后台“消息推送”页集中管理全部记录，含已推送和尚未推送的草稿，支持搜索、按类型筛选、浏览、编辑、推送和删除；页面加载只读取 D1，不请求 Telegram。**删除记录只清理本站数据，不会删除 Telegram 上已经发送的消息**，需要撤回请自行在 Telegram 中操作。消息发出后仍可继续编辑并更新到同一条消息，但无法退回草稿状态。
+| `GITHUB_TOKEN` | 否 | Secret | 提高后台读取公开 GitHub 仓库信息的请求限额，建议使用无写入、删除或管理权限的只读 Token；未配置时由管理员浏览器直接请求。 |
+| `IMGBED_TOKEN` | 否 | Secret | [CloudFlare ImgBed](https://github.com/MarSeventh/CloudFlare-ImgBed) 的 API Token，建议只授予 `upload` 权限；重新部署后在后台“服务设置”填写图床地址和上传方式并开启。可为工具预览图、文章封面和 Telegram 推送图片上传 PNG、JPEG、WebP、GIF 或 AVIF，单张不超过 10MB。 |
+| `TURNSTILE_SITE_KEY` | 否，需与私密密钥同时配置 | 普通变量 | 管理员登录页使用的 Turnstile 站点密钥，需与私密密钥同时配置。 |
+| `TURNSTILE_SECRET_KEY` | 否，需与站点密钥同时配置 | Secret | 服务端验证 Turnstile 结果的私密密钥；需添加部署域名并重新部署，再到后台开启。 |
+| `TGTOKEN` | 否 | Secret | Telegram Bot Token；重新部署后在后台填写接收目标、测试连接并开启。推送只由管理员手动触发。 |
 
 ## 本地开发
 

@@ -1,6 +1,5 @@
 import {
   getDatabase,
-  ensureTelegramMessageSchema,
   getAdminCategorySettings,
   InvalidRequestError,
   json,
@@ -13,9 +12,14 @@ import {
   type Env
 } from "../../_shared";
 
-const ADMIN_CATEGORY_SCOPES = ["tools", "articles", "content"] as const;
+const ADMIN_CATEGORY_SCOPES = ["tools", "articles", "push", "content"] as const;
 const ADMIN_ALL_CATEGORY = "All";
 const ADMIN_FEATURED_CATEGORY = "__admin_featured__";
+const TELEGRAM_PUSH_RESOURCE_FILTERS = {
+  __telegram_tool__: "tool",
+  __telegram_article__: "article",
+  __telegram_content__: "content"
+} as const;
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const unauthorized = await requireAdmin(request, env);
@@ -69,7 +73,8 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const scope = readCategoryScope(payload.scope);
     const action = payload.action === "delete" ? "delete" : "migrate";
     const category = readCategoryName(payload.category, "category", {
-      allowAll: action === "delete"
+      allowAll: action === "delete",
+      allowPushFilter: scope === "push" && action === "delete"
     });
     const targetCategory =
       action === "migrate"
@@ -117,7 +122,7 @@ function readCategoryScope(value: unknown): AdminCategoryScope {
 function readCategoryName(
   value: unknown,
   field: string,
-  options: { allowAll?: boolean } = {}
+  options: { allowAll?: boolean; allowPushFilter?: boolean } = {}
 ) {
   if (typeof value !== "string") {
     throw new InvalidRequestError(`${field} is required.`);
@@ -131,6 +136,10 @@ function readCategoryName(
 
   if (options.allowAll && isAllCategory(category)) {
     return ADMIN_ALL_CATEGORY;
+  }
+
+  if (options.allowPushFilter && getTelegramPushResourceType(category)) {
+    return category;
   }
 
   if (category !== ADMIN_FEATURED_CATEGORY && isReservedCategory(category)) {
@@ -153,8 +162,17 @@ function isReservedCategory(category: string) {
     category === "全部" ||
     category === "精选" ||
     normalized === "all" ||
-    normalized === "featured"
+    normalized === "featured" ||
+    normalized === "__telegram_tool__" ||
+    normalized === "__telegram_article__" ||
+    normalized === "__telegram_content__"
   );
+}
+
+function getTelegramPushResourceType(category: string) {
+  return TELEGRAM_PUSH_RESOURCE_FILTERS[
+    category as keyof typeof TELEGRAM_PUSH_RESOURCE_FILTERS
+  ];
 }
 
 async function updateCategorySettings(
@@ -165,7 +183,7 @@ async function updateCategorySettings(
 ) {
   const current = await getAdminCategorySettings(env);
 
-  if (isAllCategory(category)) {
+  if (isAllCategory(category) || (scope === "push" && getTelegramPushResourceType(category))) {
     return current;
   }
 
@@ -212,6 +230,14 @@ async function migrateCategoryContent(
     );
   }
 
+  if (scope === "push") {
+    return getChanges(
+      await db.prepare(
+        "UPDATE telegram_messages SET category = ? WHERE category = ?"
+      ).bind(targetCategory, category).run()
+    );
+  }
+
   const now = new Date().toISOString();
   const sourceResult = await db.prepare(
     "UPDATE content_sources SET category = ?, updated_at = ? WHERE category = ?"
@@ -232,10 +258,8 @@ async function deleteCategoryContent(
   scope: AdminCategoryScope,
   category: string
 ) {
-  await ensureTelegramMessageSchema(db);
   if (scope === "tools") {
     if (isAllCategory(category)) {
-      await db.prepare("DELETE FROM telegram_messages WHERE resource_type = 'tool'").run();
       return getChanges(await db.prepare("DELETE FROM tools").run());
     }
 
@@ -247,11 +271,6 @@ async function deleteCategoryContent(
       );
     }
 
-    await db.prepare(
-      `DELETE FROM telegram_messages
-       WHERE resource_type = 'tool'
-         AND resource_id IN (SELECT id FROM tools WHERE category = ?)`
-    ).bind(category).run();
     return getChanges(
       await db.prepare("DELETE FROM tools WHERE category = ?").bind(category).run()
     );
@@ -260,7 +279,6 @@ async function deleteCategoryContent(
   if (scope === "articles") {
     if (isAllCategory(category)) {
       await db.prepare("UPDATE content_items SET article_id = NULL").run();
-      await db.prepare("DELETE FROM telegram_messages WHERE resource_type = 'article'").run();
 
       return getChanges(await db.prepare("DELETE FROM articles").run());
     }
@@ -272,14 +290,31 @@ async function deleteCategoryContent(
     )
       .bind(category)
       .run();
-    await db.prepare(
-      `DELETE FROM telegram_messages
-       WHERE resource_type = 'article'
-         AND resource_id IN (SELECT id FROM articles WHERE category = ?)`
-    ).bind(category).run();
-
     return getChanges(
       await db.prepare("DELETE FROM articles WHERE category = ?")
+        .bind(category)
+        .run()
+    );
+  }
+
+  if (scope === "push") {
+    if (isAllCategory(category)) {
+      return getChanges(
+        await db.prepare("DELETE FROM telegram_messages").run()
+      );
+    }
+
+    const resourceType = getTelegramPushResourceType(category);
+    if (resourceType) {
+      return getChanges(
+        await db.prepare("DELETE FROM telegram_messages WHERE resource_type = ?")
+          .bind(resourceType)
+          .run()
+      );
+    }
+
+    return getChanges(
+      await db.prepare("DELETE FROM telegram_messages WHERE category = ?")
         .bind(category)
         .run()
     );

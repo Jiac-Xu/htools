@@ -1,5 +1,7 @@
-import { Wand2 } from "lucide-react";
+import { ArrowUpRight, Wand2 } from "lucide-react";
 import {
+  type ButtonHTMLAttributes,
+  type MouseEventHandler,
   type ReactNode,
   createContext,
   useContext,
@@ -10,6 +12,7 @@ import {
 } from "react";
 import type { SiteSettings } from "./types";
 import { getSiteDisplayName, getSiteSubtitle } from "./site-helpers";
+import { getEffectiveTags } from "../shared/effective-tags";
 
 export const SiteSettingsContext = createContext<SiteSettings | undefined>(undefined);
 
@@ -21,6 +24,56 @@ export function useSiteSettings() {
   }
 
   return settings;
+}
+
+export function PublicGlowAction({
+  children,
+  className = "",
+  disabled = false,
+  href,
+  onClick,
+  showArrow = true,
+  type = "button"
+}: {
+  children: ReactNode;
+  className?: string;
+  disabled?: boolean;
+  href?: string;
+  onClick?: MouseEventHandler<HTMLAnchorElement | HTMLButtonElement>;
+  showArrow?: boolean;
+  type?: ButtonHTMLAttributes<HTMLButtonElement>["type"];
+}) {
+  const content = (
+    <>
+      <span>{children}</span>
+      {showArrow ? <ArrowUpRight aria-hidden="true" size={17} /> : null}
+    </>
+  );
+  const actionClassName = `primary-button public-glow-action ${className}`.trim();
+
+  if (href) {
+    return (
+      <a
+        aria-disabled={disabled || undefined}
+        className={actionClassName}
+        href={disabled ? undefined : href}
+        onClick={onClick as MouseEventHandler<HTMLAnchorElement> | undefined}
+      >
+        {content}
+      </a>
+    );
+  }
+
+  return (
+    <button
+      className={actionClassName}
+      disabled={disabled}
+      type={type}
+      onClick={onClick as MouseEventHandler<HTMLButtonElement> | undefined}
+    >
+      {content}
+    </button>
+  );
 }
 
 export function isSiteIconDataUrl(value: string) {
@@ -149,18 +202,24 @@ export function SkeletonLayoutMask({
 }
 
 export function CompactTagRow({
+  fallbackCategory = "",
   tags,
   visibleCount: maxVisibleCount
 }: {
+  fallbackCategory?: string;
   tags: string[];
   visibleCount?: number;
 }) {
+  const displayTags = useMemo(
+    () => getEffectiveTags(tags, fallbackCategory),
+    [fallbackCategory, tags]
+  );
   const rowRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
-  const [fitCount, setFitCount] = useState(tags.length);
+  const [fitCount, setFitCount] = useState(displayTags.length);
   const visibleLimit = maxVisibleCount ?? fitCount;
-  const visibleTags = tags.slice(0, Math.min(visibleLimit, tags.length));
-  const hiddenCount = Math.max(tags.length - visibleTags.length, 0);
+  const visibleTags = displayTags.slice(0, Math.min(visibleLimit, displayTags.length));
+  const hiddenCount = Math.max(displayTags.length - visibleTags.length, 0);
 
   useEffect(() => {
     if (maxVisibleCount !== undefined) {
@@ -199,8 +258,8 @@ export function CompactTagRow({
 
       let nextFitCount = 0;
 
-      for (let count = tags.length; count >= 0; count -= 1) {
-        const hidden = tags.length - count;
+      for (let count = displayTags.length; count >= 0; count -= 1) {
+        const hidden = displayTags.length - count;
         const tagsWidth = tagWidths
           .slice(0, count)
           .reduce((total, width, index) => total + width + (index > 0 ? gap : 0), 0);
@@ -224,27 +283,35 @@ export function CompactTagRow({
     return () => {
       resizeObserver.disconnect();
     };
-  }, [maxVisibleCount, tags]);
+  }, [displayTags, maxVisibleCount]);
 
   return (
     <div className="tag-row-shell">
       <div className="tag-row" ref={rowRef}>
-        {visibleTags.map((tag, index) => (
-          <span className="tag" key={`${tag}-${index}`}>
-            {tag}
-          </span>
-        ))}
+        {visibleTags.map((tag, index) => {
+          const displayTag = tag.trim().replace(/^#+/, "");
+
+          return (
+            <span className="tag" key={`${displayTag}-${index}`}>
+              {displayTag}
+            </span>
+          );
+        })}
         {hiddenCount > 0 ? <span className="tag tag-more">+{hiddenCount}</span> : null}
       </div>
       {maxVisibleCount === undefined ? (
         <div className="tag-row tag-row-measure" ref={measureRef} aria-hidden="true">
-          {tags.map((tag, index) => (
-            <span className="tag" data-tag-measure="" key={`${tag}-${index}`}>
-              {tag}
-            </span>
-          ))}
-          {tags.map((_, index) => {
-            const count = tags.length - index;
+          {displayTags.map((tag, index) => {
+            const displayTag = tag.trim().replace(/^#+/, "");
+
+            return (
+              <span className="tag" data-tag-measure="" key={`${displayTag}-${index}`}>
+                {displayTag}
+              </span>
+            );
+          })}
+          {displayTags.map((_, index) => {
+            const count = displayTags.length - index;
 
             return (
               <span

@@ -14,6 +14,10 @@ type TelegramPayload = {
   mediaEnabled?: unknown;
   mediaUrl?: unknown;
   locale?: unknown;
+  title?: unknown;
+  resource?: unknown;
+  category?: unknown;
+  confirmUncertainRetry?: unknown;
 };
 
 function readRequestContext(request: Request, params: Record<string, string | string[]>) {

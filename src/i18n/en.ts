@@ -1,4 +1,5 @@
 import type { Messages } from "./type";
+import { ADMIN_RESOURCE_FIELD_EXAMPLES } from "../admin-field-examples";
 
 export const en: Messages = {
   brand: "HTools",
@@ -26,7 +27,7 @@ export const en: Messages = {
     latestTools: "Latest Tools",
     latestArticles: "Latest Articles",
     moreTools: "More Tools",
-    morePosts: "More Posts",
+    moreArticles: "More Articles",
     footerDescription:
       "Explore curated tools and resources to accelerate your indie development journey.",
     footerProduct: "Product",
@@ -77,7 +78,7 @@ export const en: Messages = {
   },
   search: {
     trigger: "Search",
-    placeholder: "Quick search..."
+    placeholder: "Quick search"
   },
   theme: {
     light: "Light",
@@ -132,10 +133,11 @@ export const en: Messages = {
     alreadyListed: "This project is already listed. No duplicate submission is needed.",
     checkFailed: "Unable to check whether this project is already listed. Try again later.",
     issueUrlFailed: "Unable to create the GitHub submission URL. Check the repository settings.",
-    githubMetadataAction: "GitHub Info",
+    githubMetadataAction: "Read Repo",
     githubMetadataSuccess: "GitHub repository information loaded.",
     githubMetadataNotFound: "No public GitHub repository was found.",
     githubMetadataRateLimited: "The GitHub public API rate limit was reached. Try again later.",
+    githubMetadataTimeout: "GitHub metadata request timed out. Check your connection and try again.",
     githubMetadataFailed: "Unable to load GitHub repository information. Check the project URL.",
     submitHint: "You will continue to GitHub to review and create a public issue.",
     validationNameRequired: "Enter a tool name.",
@@ -181,10 +183,9 @@ export const en: Messages = {
     toolLibrary: "Tool Library",
     settings: "Settings",
     rootUser: "Admin",
-    refresh: "Refresh",
     collapseSidebar: "Collapse sidebar",
     expandSidebar: "Expand sidebar",
-    searchPlaceholder: "Search tools...",
+    searchPlaceholder: "Search tools",
     manageTools: "Manage tools",
     sortLatest: "Latest first",
     sortOldest: "Oldest first",
@@ -196,17 +197,12 @@ export const en: Messages = {
     passwordRequired: "Enter the password",
     turnstileRequired: "Complete the verification first.",
     turnstileServerFailed: "The verification service is temporarily unavailable. Try again later.",
-    tableTool: "Tool",
     editTool: "Edit Tool",
     deleteTool: "Delete Tool",
     editAction: "Edit",
     deleteAction: "Delete",
   },
   linkCheck: {
-    eyebrow: "Link Health Check",
-    title: "Link Check",
-    description:
-      "Check whether existing project URLs and demo sites are reachable. Results are display-only and do not modify the database.",
     timeout: "Timeout",
     timeoutHelp:
       "Wait up to 9 seconds per link; when proxy fallback is enabled in system settings, network errors will try the proxy.",
@@ -256,26 +252,31 @@ export const en: Messages = {
     }
   },
   form: {
+    addDescription: "Enter the tool's public information, category, and display content, then save it to the library.",
+    editDescription: "Edit the tool's public information, category, and display content, then save the changes to the library.",
     name: "Name",
+    namePlaceholder: ADMIN_RESOURCE_FIELD_EXAMPLES.en.name,
     url: "Project URL",
+    urlPlaceholder: ADMIN_RESOURCE_FIELD_EXAMPLES.en.url,
     demoUrl: "Demo site",
-    demoUrlPlaceholder: "Optional deployed demo URL",
+    demoUrlPlaceholder: ADMIN_RESOURCE_FIELD_EXAMPLES.en.demoUrl,
     image: "Preview image",
-    imagePlaceholder: "Leave empty to generate from project URL",
-    category: "Category",
+    imagePlaceholder: ADMIN_RESOURCE_FIELD_EXAMPLES.en.image,
+    imageUpload: "Upload Image",
+    imageUploadUnavailable: "Image upload is not available yet.",
+    imageUploadSuccess: "Image uploaded and inserted. Save to apply it.",
+    category: "Tool category",
     description: "Description",
+    descriptionPlaceholder: ADMIN_RESOURCE_FIELD_EXAMPLES.en.description,
     tags: "Tags",
-    tagsPlaceholder: "Database, Auth, AI",
-    githubMetadata: "GitHub Info",
+    tagsPlaceholder: ADMIN_RESOURCE_FIELD_EXAMPLES.en.tags,
+    githubMetadata: "Read Repo",
+    githubMetadataUnavailable: "Enter a valid GitHub repository URL first.",
     featuredTool: "Featured tool",
     regularTool: "Regular tool",
     saveTool: "Save Tool"
   },
   githubSettings: {
-    title: "GitHub Submission Settings",
-    description: "Configure the target GitHub repository for public tool suggestions.",
-    enabled: "Enable",
-    disabled: "Disable",
     statusEnabled: "Enabled",
     statusDisabled: "Disabled",
     owner: "Repository Owner",
@@ -283,7 +284,6 @@ export const en: Messages = {
     labels: "Issue Labels",
     labelsPlaceholder: "tool-submission, pending-review",
     saved: "GitHub submission settings saved.",
-    saveFailed: "Failed to save GitHub submission settings.",
   },
   status: {
     loginFailed: "Login failed.",

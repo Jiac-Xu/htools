@@ -28,6 +28,9 @@ export type ToastInput = {
 export type PendingAdminCategoryAction = {
   category: string;
   contentCount: number;
+  // 订阅内容的弹窗要同时说"几个订阅"和"几条内容",所以这里存两个数。
+  // 在打开弹窗那一刻算好存进来,不要等渲染时再算 —— 那时候列表可能已经变了。
+  sourceCount: number;
   scope: AdminCategoryScope;
 };
 
@@ -59,6 +62,9 @@ export const ADMIN_SYSTEM_SETTINGS_GROUP_PATHS: Record<
 };
 
 export const ADMIN_FEATURED_CATEGORY = "__admin_featured__";
+const TELEGRAM_PUSH_TOOL_CATEGORY = "__telegram_tool__";
+const TELEGRAM_PUSH_ARTICLE_CATEGORY = "__telegram_article__";
+const TELEGRAM_PUSH_CONTENT_CATEGORY = "__telegram_content__";
 export const ADMIN_ARTICLE_PAGE_SIZE = 50;
 export const CONTENT_ITEM_PAGE_SIZE = 50;
 export const DEFAULT_SOURCE_URL =
@@ -74,7 +80,7 @@ export const initialForm: ToolInput = {
   url: "",
   demoUrl: "",
   image: "",
-  category: "Web Framework",
+  category: "",
   tags: [],
   githubLanguage: "",
   githubLicense: "",
@@ -104,6 +110,7 @@ export const initialContentSourceForm: ContentSourceInput = {
 export const initialAdminCategorySettings: AdminCategorySettings = {
   tools: [],
   articles: [],
+  push: [],
   content: []
 };
 
@@ -231,13 +238,65 @@ export function isAllCategoryValue(category: string) {
   return normalizeAdminCategoryValue(category) === "All";
 }
 
+// 订阅内容的分类计数刻意分成两个函数,不许合并成一个和:
+// 给人看的数字只能数内容条数 —— 把订阅源加进去就会把"30 条内容"说成"31 条内容";
+// 而"要不要弹确认"必须把订阅源也算上 —— 删分类会连该分类下的订阅源一起删,
+// 一个"有订阅、还没同步出内容"的分类如果只看内容条数就是 0,会被无确认直接删掉,
+// 丢的是订阅源本身,不是可以再同步回来的内容。
+export function countContentCategoryItems(
+  categoryCounts: Record<string, number>,
+  category: string
+) {
+  const normalized = normalizeAdminCategoryValue(category);
+
+  if (isAllCategoryValue(normalized)) {
+    return Object.values(categoryCounts).reduce((total, count) => total + count, 0);
+  }
+
+  return Object.entries(categoryCounts).reduce(
+    (total, [name, count]) =>
+      normalizeAdminCategoryValue(name) === normalized ? total + count : total,
+    0
+  );
+}
+
+export function countContentCategorySources(
+  sources: readonly { category: string }[],
+  category: string
+) {
+  const normalized = normalizeAdminCategoryValue(category);
+
+  if (isAllCategoryValue(normalized)) {
+    return sources.length;
+  }
+
+  return sources.filter(
+    (source) => normalizeAdminCategoryValue(source.category) === normalized
+  ).length;
+}
+
+// 删除前要不要弹确认:只要还有东西会被删掉就必须弹,订阅源和内容都算。
+export function hasDeletableContentCategoryPayload(
+  itemCount: number,
+  sourceCount: number
+) {
+  return itemCount > 0 || sourceCount > 0;
+}
+
 export function isFeaturedCategoryValue(category: string) {
   return normalizeAdminCategoryValue(category) === ADMIN_FEATURED_CATEGORY;
 }
 
 export function isPersistableAdminCategory(category: string) {
   const normalized = normalizeAdminCategoryValue(category);
-  return Boolean(normalized && !isAllCategoryValue(normalized) && !isFeaturedCategoryValue(normalized));
+  return Boolean(
+    normalized &&
+    !isAllCategoryValue(normalized) &&
+    !isFeaturedCategoryValue(normalized) &&
+    normalized !== TELEGRAM_PUSH_TOOL_CATEGORY &&
+    normalized !== TELEGRAM_PUSH_ARTICLE_CATEGORY &&
+    normalized !== TELEGRAM_PUSH_CONTENT_CATEGORY
+  );
 }
 
 function normalizeAdminCategoryList(categories: string[]) {

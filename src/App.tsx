@@ -3,7 +3,6 @@ import {
   AtSign,
   BadgeCheck,
   Boxes,
-  Check,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
@@ -15,7 +14,6 @@ import {
   House,
   Instagram,
   LayoutDashboard,
-  Languages,
   Link2,
   Linkedin,
   LogIn,
@@ -29,7 +27,6 @@ import {
   Send,
   Sparkles,
   Star,
-  Sun,
   Twitter,
   UserRound,
   Wrench,
@@ -58,8 +55,7 @@ import {
   cleanArticleDisplayText,
   getArticleDisplayTitle,
   getArticleText,
-  getCategoryIcon,
-  stripLeadingArticleDuplicates
+  getCategoryIcon
 } from "./article-helpers";
 import {
   createToolPreviewSource,
@@ -74,14 +70,22 @@ import { useLoadingSkeleton } from "./useLoadingSkeleton";
 import { useOverlayFocusManagement } from "./useOverlayFocusManagement";
 import { useVisualViewportKeyboard } from "./useVisualViewportKeyboard";
 import { useUtilityMenuKeyboard } from "./useUtilityMenuKeyboard";
+import { usePointerFocusRelease } from "./usePointerFocusRelease";
 import {
   CompactTagRow,
+  PublicGlowAction,
   SiteBrandIdentity,
   SiteSettingsContext,
   SkeletonLayoutMask,
   SkeletonVisibility,
   useSiteSettings
 } from "./shared-ui";
+import UtilityMenuControls, {
+  type UtilityMenuController
+} from "./components/UtilityMenuControls";
+import ArticleDetailContent, {
+  ArticleDetailContentSkeleton
+} from "./components/ArticleDetailContent";
 import {
   DEFAULT_SITE_SETTINGS,
   createArticleStructuredData,
@@ -111,7 +115,6 @@ import {
 } from "./public-api";
 import {
   getLocaleOption,
-  localeOptions,
   resolveLocale,
   translations,
   type Locale,
@@ -398,6 +401,7 @@ export function App() {
     resolveLocale(localStorage.getItem("htools_locale") ?? navigator.language)
   );
   const toastIdRef = useRef(0);
+  const activeToastKeysRef = useRef(new Set<string>());
   const publicToolsRequestIdRef = useRef(0);
   const publicToolsAbortRef = useRef<AbortController | null>(null);
   const publicToolsLoadingMoreRef = useRef(false);
@@ -449,11 +453,16 @@ export function App() {
   }, []);
 
   const notify = useCallback((toast: ToastInput) => {
+    const toastKey = `${toast.tone}\u0000${toast.message}`;
+    if (activeToastKeysRef.current.has(toastKey)) return;
+
+    activeToastKeysRef.current.add(toastKey);
     const id = ++toastIdRef.current;
     const nextToast = { ...toast, id };
 
     setToasts((current) => [...current, nextToast].slice(-3));
     window.setTimeout(() => {
+      activeToastKeysRef.current.delete(toastKey);
       dismissToast(id);
     }, 4200);
   }, [dismissToast]);
@@ -1302,12 +1311,11 @@ function HomePage({
               <p>{homeHero.description}</p>
             </div>
             <div className="hero-actions">
-              <a className="primary-button glow-button" href="/tools">
+              <PublicGlowAction href="/tools">
                 {t.home.exploreAll}
-                <ArrowUpRight size={17} />
-              </a>
-              <a className="ghost-button hero-ghost" href="#latest-tools">
-                {t.home.latestTools}
+              </PublicGlowAction>
+              <a className="ghost-button hero-ghost" href="/submit">
+                {t.actions.submitTool}
               </a>
             </div>
           </div>
@@ -1346,7 +1354,7 @@ function HomePage({
                 </div>
                 <p>
                   {toolLoadError
-                    ? t.empty.connectionDescription
+                    ? toolLoadError
                     : totalToolCount === 0
                       ? t.empty.libraryDescription
                       : t.empty.description}
@@ -1364,10 +1372,9 @@ function HomePage({
             )}
           </div>
           <div className="section-action">
-            <a className="primary-button glow-button small-glow" href="/tools">
+            <PublicGlowAction href="/tools">
               {t.home.moreTools}
-              <ArrowUpRight size={15} />
-            </a>
+            </PublicGlowAction>
           </div>
         </section>
 
@@ -1400,17 +1407,16 @@ function HomePage({
                 </div>
                 <p>
                   {articleError
-                    ? t.empty.connectionDescription
+                    ? articleError
                     : articleText.publicEmptyDescription}
                 </p>
               </div>
             )}
           </div>
           <div className="section-action">
-            <a className="primary-button glow-button small-glow" href="/articles">
-              {t.home.morePosts}
-              <ArrowUpRight size={15} />
-            </a>
+            <PublicGlowAction href="/articles">
+              {t.home.moreArticles}
+            </PublicGlowAction>
           </div>
         </section>
       </main>
@@ -1491,9 +1497,9 @@ function CategoryPage({
             <h1>{t.nav.category}</h1>
             <p>{t.hero.description}</p>
           </div>
-          <a className="primary-button submit-button glow-button" href="/submit">
+          <PublicGlowAction href="/submit">
             {t.actions.submitTool}
-          </a>
+          </PublicGlowAction>
         </section>
 
         <section className="directory-layout category-directory" id="category">
@@ -1558,7 +1564,7 @@ function CategoryPage({
                   </div>
                   <p>
                     {toolLoadError
-                      ? t.empty.connectionDescription
+                      ? toolLoadError
                       : totalToolCount === 0
                         ? t.empty.libraryDescription
                         : t.empty.description}
@@ -1763,7 +1769,7 @@ function ArticlesPage({
                   </div>
                   <p>
                     {error
-                      ? t.empty.connectionDescription
+                      ? error
                       : totalArticleCount === 0
                         ? articleText.publicEmptyDescription
                         : articleText.noMatchDescription}
@@ -1855,15 +1861,6 @@ function ArticleDetailPage({
   const articleDisplaySummary = article
     ? cleanArticleDisplayText(article.summary)
     : "";
-  const articleBodyContent = article
-    ? stripLeadingArticleDuplicates(
-        article.content,
-        articleDisplayTitle || article.title,
-        articleDisplaySummary || article.summary,
-        article.coverImage
-      )
-    : "";
-
   useEffect(() => {
     let active = true;
 
@@ -1995,47 +1992,18 @@ function ArticleDetailPage({
       <main className="content-page article-detail-page">
         {isLoading ? (
           <SkeletonVisibility visible={showSkeleton}>
-            <ArticleDetailSkeleton articleText={articleText} />
+            <ArticleDetailContentSkeleton
+              backLink={{ href: "/articles", label: articleText.backToArticles }}
+              locale={locale}
+            />
           </SkeletonVisibility>
         ) : article ? (
-          <article className="article-detail-card">
-            <a className="ghost-button article-back-link" href="/articles">
-              <ChevronLeft size={16} />
-              {articleText.backToArticles}
-            </a>
-
-            <header className="article-detail-head">
-              <div className="article-detail-meta">
-                {article.category ? <span>{article.category}</span> : null}
-                {formatAdminDate(article.published_at ?? article.updated_at) ? (
-                  <span>
-                    {articleText.publishedOn(
-                      formatAdminDate(article.published_at ?? article.updated_at)
-                    )}
-                  </span>
-                ) : null}
-              </div>
-              <h1>{articleDisplayTitle}</h1>
-              <p>{articleDisplaySummary}</p>
-              <CompactTagRow tags={article.tags} />
-            </header>
-
-            <ArticleDetailCover src={article.coverImage} />
-
-            <Suspense
-              fallback={
-                <LoadingSkeleton>
-                  <ArticleBodySkeleton />
-                </LoadingSkeleton>
-              }
-            >
-              <MarkdownContent
-                content={articleBodyContent}
-                locale={locale}
-                proxySettings={proxySettings}
-              />
-            </Suspense>
-          </article>
+          <ArticleDetailContent
+            article={article}
+            backLink={{ href: "/articles", label: articleText.backToArticles }}
+            locale={locale}
+            proxySettings={proxySettings}
+          />
         ) : (
           <section className="empty-state article-empty-state">
             <div className="empty-state-title">
@@ -2159,88 +2127,9 @@ function ArticleListItem({
         </span>
         <h3>{displayTitle}</h3>
         <p>{displaySummary}</p>
-        <CompactTagRow tags={article.tags} />
+        <CompactTagRow fallbackCategory={article.category} tags={article.tags} />
       </div>
     </a>
-  );
-}
-
-function ArticleDetailCover({ src }: { src: string }) {
-  const proxySettings = useProxySettings();
-  const proxiedSrc = proxifyUrl(src, proxySettings, { resourceType: "image" });
-  const imageRef = useRef<HTMLImageElement | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    setFailed(false);
-    setLoaded(false);
-  }, [proxiedSrc]);
-
-  useEffect(() => {
-    const image = imageRef.current;
-
-    if (image?.complete && image.naturalWidth > 0) {
-      setLoaded(true);
-    }
-  }, [proxiedSrc]);
-
-  if (!proxiedSrc || failed) {
-    return null;
-  }
-
-  return (
-    <figure
-      className={`article-detail-cover-frame ${loaded ? "is-loaded" : ""}`}
-      aria-hidden="true"
-    >
-      <img
-        className="article-detail-cover"
-        ref={imageRef}
-        src={proxiedSrc}
-        alt=""
-        loading="eager"
-        decoding="async"
-        fetchPriority="high"
-        onLoad={() => setLoaded(true)}
-        onError={() => setFailed(true)}
-      />
-    </figure>
-  );
-}
-
-function ArticleBodySkeleton() {
-  return (
-    <SkeletonLayoutMask className="markdown-content article-body-skeleton">
-      <h2>Article section heading</h2>
-      <p>Article paragraph content follows the final Markdown typography and width.</p>
-      <p>Additional paragraph content keeps the same spacing and responsive wrapping.</p>
-      <h3>Article subsection heading</h3>
-      <ul><li>Article list item</li><li>Article list item</li></ul>
-    </SkeletonLayoutMask>
-  );
-}
-
-function ArticleDetailSkeleton({ articleText }: { articleText: ReturnType<typeof getArticleText> }) {
-  return (
-    <section className="article-detail-card article-detail-loading">
-      <SkeletonLayoutMask>
-        <a className="ghost-button article-back-link" href="/articles">
-          <ChevronLeft size={16} />{articleText.backToArticles}
-        </a>
-      </SkeletonLayoutMask>
-      <SkeletonLayoutMask className="article-detail-head article-detail-head-skeleton">
-        <div className="article-detail-meta">
-          <span>Category</span>
-          <span>{articleText.publishedOn("2026-07-18")}</span>
-        </div>
-        <h1>Article detail title placeholder</h1>
-        <p>Article detail summary follows the final responsive typography.</p>
-        <CompactTagRow tags={["Article", "Category", "Guide"]} />
-      </SkeletonLayoutMask>
-      <div className="article-detail-cover-frame article-cover-skeleton" aria-hidden="true" />
-      <ArticleBodySkeleton />
-    </section>
   );
 }
 
@@ -2436,6 +2325,7 @@ function HomeHeader({
   t: Messages;
   themeMode: ThemeMode;
 }) {
+  usePointerFocusRelease();
   const {
     closeMenu: closePublicUtilityMenu,
     getMenuId: getPublicUtilityMenuId,
@@ -2445,6 +2335,14 @@ function HomeHeader({
     setOpenMenu,
     toggleMenu: togglePublicUtilityMenu
   } = useUtilityMenuKeyboard<"locale" | "theme">("public");
+  const publicUtilityMenuController: UtilityMenuController = {
+    closeMenu: closePublicUtilityMenu,
+    getMenuId: getPublicUtilityMenuId,
+    handleMenuKeyDown: handlePublicUtilityMenuKeyDown,
+    handleTriggerKeyDown: handlePublicUtilityMenuTriggerKeyDown,
+    openMenu,
+    toggleMenu: togglePublicUtilityMenu
+  };
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isMobileNavClosing, setIsMobileNavClosing] = useState(false);
@@ -2531,11 +2429,6 @@ function HomeHeader({
   const canOpenGlobalSearch = showSearch || activePage === "home";
   const isSearchOverlayOpen = canOpenGlobalSearch && isSearchOpen;
   const shouldLockBodyScroll = isSearchOverlayOpen || isMobileNavVisible;
-  const themeOptions: Array<{ label: string; value: ThemeMode }> = [
-    { label: t.theme.light, value: "light" },
-    { label: t.theme.dark, value: "dark" },
-    { label: t.theme.system, value: "system" }
-  ];
   const searchOverlayFocus = useOverlayFocusManagement({
     active: isSearchOverlayOpen,
     containerRef: searchPanelRef,
@@ -2978,102 +2871,33 @@ function HomeHeader({
               </nav>
 
               <div className="mobile-nav-bottom">
-                <div className="mobile-nav-utility">
-                  <div className="menu-control mobile-utility-menu">
-                    <button
-                      className="icon-button"
-                      type="button"
-                      aria-label={t.actions.toggleLanguage}
-                      aria-expanded={openMenu === "locale"}
-                      aria-haspopup="menu"
-                      onClick={(event) =>
-                        togglePublicUtilityMenu("locale", event.currentTarget)
-                      }
-                      onKeyDown={(event) =>
-                        handlePublicUtilityMenuTriggerKeyDown("locale", event)
-                      }
-                    >
-                      <Languages size={18} />
-                    </button>
-                    {openMenu === "locale" ? (
-                      <div
-                        className="floating-menu language-menu"
-                        role="menu"
-                        data-utility-menu={getPublicUtilityMenuId("locale")}
-                        onKeyDown={handlePublicUtilityMenuKeyDown}
-                      >
-                        {localeOptions.map((option) => (
-                          <button
-                            className="menu-option"
-                            key={option.code}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={option.code === locale}
-                            onClick={() => {
-                              onLocaleChange(option.code);
-                              closePublicUtilityMenu(true);
-                            }}
-                          >
-                            <span>{option.label}</span>
-                            {option.code === locale ? <Check size={16} /> : null}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="menu-control mobile-utility-menu">
-                    <button
-                      className="icon-button"
-                      type="button"
-                      aria-label={t.actions.toggleTheme}
-                      aria-expanded={openMenu === "theme"}
-                      aria-haspopup="menu"
-                      onClick={(event) =>
-                        togglePublicUtilityMenu("theme", event.currentTarget)
-                      }
-                      onKeyDown={(event) =>
-                        handlePublicUtilityMenuTriggerKeyDown("theme", event)
-                      }
-                    >
-                      <Sun size={18} />
-                    </button>
-                    {openMenu === "theme" ? (
-                      <div
-                        className="floating-menu theme-menu"
-                        role="menu"
-                        data-utility-menu={getPublicUtilityMenuId("theme")}
-                        onKeyDown={handlePublicUtilityMenuKeyDown}
-                      >
-                        {themeOptions.map((option) => (
-                          <button
-                            className="menu-option"
-                            key={option.value}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={option.value === themeMode}
-                            onClick={() => {
-                              onThemeChange(option.value);
-                              closePublicUtilityMenu(true);
-                            }}
-                          >
-                            <span>{option.label}</span>
-                            {option.value === themeMode ? <Check size={16} /> : null}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
+                <UtilityMenuControls
+                  className="mobile-nav-utility"
+                  controller={publicUtilityMenuController}
+                  iconSize={18}
+                  locale={locale}
+                  localeControlClassName="mobile-utility-menu"
+                  onLocaleChange={onLocaleChange}
+                  onThemeChange={onThemeChange}
+                  t={t}
+                  themeControlClassName="mobile-utility-menu"
+                  themeMode={themeMode}
+                />
 
-                <a className="mobile-admin-card" href="/admin" onClick={closeMobileNav}>
+                <div className="mobile-admin-card">
                   <span className="mobile-admin-card-copy">
                     <strong>{t.actions.login}</strong>
                     <small>{locale === "zh" ? "进入控制台" : "Enter console"}</small>
                   </span>
-                  <span className="icon-button" aria-hidden="true">
+                  <a
+                    className="icon-button"
+                    href="/admin"
+                    aria-label={t.actions.login}
+                    onClick={closeMobileNav}
+                  >
                     <LogIn size={18} />
-                  </span>
-                </a>
+                  </a>
+                </div>
               </div>
             </aside>
           </div>,
@@ -3133,91 +2957,19 @@ function HomeHeader({
               <kbd className="search-trigger-shortcut">{searchShortcutLabel}</kbd>
             </button>
           ) : null}
-          <div className="menu-control locale-control">
-            <button
-              className="icon-button locale-button"
-              type="button"
-              aria-label={t.actions.toggleLanguage}
-              aria-expanded={openMenu === "locale"}
-              aria-haspopup="menu"
-              onClick={(event) =>
-                togglePublicUtilityMenu("locale", event.currentTarget)
-              }
-              onKeyDown={(event) =>
-                handlePublicUtilityMenuTriggerKeyDown("locale", event)
-              }
-            >
-              <Languages size={18} />
-            </button>
-            {shouldRenderTopbarMenus && openMenu === "locale" ? (
-              <div
-                className="floating-menu language-menu"
-                role="menu"
-                data-utility-menu={getPublicUtilityMenuId("locale")}
-                onKeyDown={handlePublicUtilityMenuKeyDown}
-              >
-                {localeOptions.map((option) => (
-                  <button
-                    className="menu-option"
-                    key={option.code}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={option.code === locale}
-                    onClick={() => {
-                      onLocaleChange(option.code);
-                      closePublicUtilityMenu(true);
-                    }}
-                  >
-                    <span>{option.label}</span>
-                    {option.code === locale ? <Check size={16} /> : null}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="menu-control theme-control">
-            <button
-              className="icon-button"
-              type="button"
-              aria-label={t.actions.toggleTheme}
-              aria-expanded={openMenu === "theme"}
-              aria-haspopup="menu"
-              onClick={(event) =>
-                togglePublicUtilityMenu("theme", event.currentTarget)
-              }
-              onKeyDown={(event) =>
-                handlePublicUtilityMenuTriggerKeyDown("theme", event)
-              }
-            >
-              <Sun size={18} />
-            </button>
-            {shouldRenderTopbarMenus && openMenu === "theme" ? (
-              <div
-                className="floating-menu theme-menu"
-                role="menu"
-                data-utility-menu={getPublicUtilityMenuId("theme")}
-                onKeyDown={handlePublicUtilityMenuKeyDown}
-              >
-                {themeOptions.map((option) => (
-                  <button
-                    className="menu-option"
-                    key={option.value}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={option.value === themeMode}
-                    onClick={() => {
-                      onThemeChange(option.value);
-                      closePublicUtilityMenu(true);
-                    }}
-                  >
-                    <span>{option.label}</span>
-                    {option.value === themeMode ? <Check size={16} /> : null}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
+          <UtilityMenuControls
+            className="home-topbar-utility-menus"
+            controller={publicUtilityMenuController}
+            iconSize={18}
+            locale={locale}
+            localeControlClassName="locale-control"
+            onLocaleChange={onLocaleChange}
+            onThemeChange={onThemeChange}
+            showMenus={shouldRenderTopbarMenus}
+            t={t}
+            themeControlClassName="theme-control"
+            themeMode={themeMode}
+          />
           <a className="login-button" href="/admin">
             <UserRound className="login-icon" size={21} />
             <span className="login-label">{t.actions.login}</span>
@@ -3312,7 +3064,10 @@ function HomeHeader({
                           <strong>{tool.name}</strong>
                           <span>{tool.description}</span>
                           <div className="global-search-tags">
-                            <CompactTagRow tags={getToolDisplayTags(tool)} />
+                            <CompactTagRow
+                              fallbackCategory={tool.category}
+                              tags={tool.tags}
+                            />
                           </div>
                         </div>
                         <ArrowUpRight size={18} />
@@ -3340,7 +3095,10 @@ function HomeHeader({
                           <strong>{getArticleDisplayTitle(article)}</strong>
                           <span>{cleanArticleDisplayText(article.summary)}</span>
                           <div className="global-search-tags">
-                            <CompactTagRow tags={article.tags} />
+                            <CompactTagRow
+                              fallbackCategory={article.category}
+                              tags={article.tags}
+                            />
                           </div>
                         </div>
                         <ArrowUpRight size={18} />
@@ -3375,22 +3133,6 @@ function SectionTitle({ icon, title }: { icon: ReactNode; title: string }) {
       {icon}
       {title}
     </h2>
-  );
-}
-
-function getToolDisplayTags(tool: Tool) {
-  const tags = tool.tags.map((tag) => tag.trim()).filter(Boolean);
-
-  if (tags.length) {
-    return tags;
-  }
-
-  return Array.from(
-    new Set(
-      [tool.githubLanguage, tool.githubLicense]
-        .map((tag) => tag.trim())
-        .filter(Boolean)
-    )
   );
 }
 
@@ -3754,7 +3496,7 @@ function HomeToolCard({
         </h3>
         <p>{tool.description}</p>
         <div className="tool-card-footer">
-          <CompactTagRow tags={getToolDisplayTags(tool)} />
+          <CompactTagRow fallbackCategory={tool.category} tags={tool.tags} />
         </div>
       </div>
     </article>
@@ -4004,7 +3746,7 @@ function ToolCard({
         </div>
         <p>{tool.description}</p>
         <div className="tool-card-footer">
-          <CompactTagRow tags={getToolDisplayTags(tool)} />
+          <CompactTagRow fallbackCategory={tool.category} tags={tool.tags} />
         </div>
       </div>
     </article>

@@ -1,6 +1,5 @@
 import {
   getDatabase,
-  ensureTelegramMessageSchema,
   invalidatePublicApiCache,
   json,
   jsonError,
@@ -19,25 +18,28 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
   try {
     const db = await getDatabase(env);
-    await ensureTelegramMessageSchema(db);
-    const [toolCount, articleCount, contentSourceCount, contentItemCount] =
+    const [toolCount, articleCount, contentSourceCount, contentItemCount, telegramMessageCount] =
       await db.batch([
         db.prepare("SELECT COUNT(*) AS total FROM tools"),
         db.prepare("SELECT COUNT(*) AS total FROM articles"),
         db.prepare("SELECT COUNT(*) AS total FROM content_sources"),
-        db.prepare("SELECT COUNT(*) AS total FROM content_items")
+        db.prepare("SELECT COUNT(*) AS total FROM content_items"),
+        db.prepare("SELECT COUNT(*) AS total FROM telegram_messages")
       ]);
     const counts = {
       tools: readCount(toolCount),
       articles: readCount(articleCount),
       contentSources: readCount(contentSourceCount),
       contentItems: readCount(contentItemCount),
+      telegramMessages: readCount(telegramMessageCount),
       settings: 1
     };
     const deleted =
-      counts.tools + counts.articles + counts.contentSources + counts.contentItems;
+      counts.tools + counts.articles + counts.contentSources + counts.contentItems +
+      counts.telegramMessages;
 
     await db.batch([
+      db.prepare("DELETE FROM telegram_push_locks"),
       db.prepare("DELETE FROM telegram_messages"),
       db.prepare("DELETE FROM content_items"),
       db.prepare("DELETE FROM content_sources"),

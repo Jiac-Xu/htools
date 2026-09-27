@@ -1,7 +1,21 @@
+import {
+  ADMIN_AI_MODELS,
+  DEFAULT_ADMIN_AI_MODEL,
+  type AdminAiModel
+} from "../shared/admin-ai";
+import {
+  DEFAULT_RSSHUB_BASE_URL,
+  normalizeRssHubBaseUrl,
+  normalizeRssHubRouteUrl,
+  resolveRssHubRouteUrl
+} from "../shared/rsshub";
+
 export type Env = {
   DB: D1Database;
+  AI?: Ai;
   ADMIN_PASSWORD?: string;
   GITHUB_TOKEN?: string;
+  IMGBED_TOKEN?: string;
   TGTOKEN?: string;
   TGID?: string;
   TURNSTILE_SITE_KEY?: string;
@@ -22,6 +36,17 @@ export type GitHubSettingsInput = {
   labels?: unknown;
 };
 
+export type AdminAiSettings = {
+  available: boolean;
+  enabled: boolean;
+  model: AdminAiModel;
+};
+
+export type AdminAiSettingsInput = {
+  enabled?: unknown;
+  model?: unknown;
+};
+
 export type GitHubToolMetadata = {
   owner: string;
   repo: string;
@@ -37,6 +62,17 @@ export type GitHubToolMetadata = {
   license: string;
   topics: string[];
   updatedAt: string;
+};
+
+export type GitHubAiContext = {
+  fullName: string;
+  description: string;
+  topics: string[];
+  language: string;
+  license: string;
+  stars: number;
+  forks: number;
+  readme: string;
 };
 
 type GitHubRepoResponse = {
@@ -62,6 +98,11 @@ type GitHubRepoResponse = {
 type GitHubMetadataCacheEntry = {
   metadata: GitHubToolMetadata;
   etag: string;
+  cachedAt: number;
+};
+
+type GitHubReadmeCacheEntry = {
+  readme: string;
   cachedAt: number;
 };
 
@@ -227,7 +268,7 @@ type ParsedFeed = {
   items: ParsedFeedItem[];
 };
 
-export type AdminCategoryScope = "tools" | "articles" | "content";
+export type AdminCategoryScope = "tools" | "articles" | "push" | "content";
 
 export type AdminCategorySettings = Record<AdminCategoryScope, string[]>;
 
@@ -244,6 +285,11 @@ export type ProxySettings = {
   baseUrl: string;
   mode: "prefix" | "edgeone-proxy" | "edgeone-advanced";
   scope: "all" | "images";
+};
+
+export type RssHubSettings = {
+  enabled: boolean;
+  baseUrl: string;
 };
 
 export type UmamiSettings = {
@@ -334,9 +380,15 @@ const encoder = new TextEncoder();
 const TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const ADMIN_PASSWORD_KEY = "admin_password";
 const ADMIN_PASSWORD_ITERATIONS = 100000;
+// 会话签名密钥:首次签发令牌时自动生成并存进 app_settings,和登录密码彻底解绑。
+// 32 字节 = 256 位,正好是 HMAC-SHA256 的原生块长度;再长也会被内部先哈希压回 32 字节,强度不变。
+const SESSION_SECRET_KEY = "session_secret";
+const SESSION_SECRET_BYTES = 32;
 const DATABASE_NOT_BOUND_MESSAGE = "请检查您的项目是否已正确绑定数据库。";
 const GITHUB_SETTINGS_KEY = "github_settings";
+const AI_SETTINGS_KEY = "ai_settings";
 const PROXY_SETTINGS_KEY = "proxy_settings";
+const RSSHUB_SETTINGS_KEY = "rsshub_settings";
 const UMAMI_SETTINGS_KEY = "umami_settings";
 const SITE_SETTINGS_KEY = "site_settings";
 const ADMIN_CATEGORY_SETTINGS_KEY = "admin_category_settings";
@@ -454,10 +506,11 @@ const DEFAULT_SITE_SETTINGS: SiteSettings = {
     en: { titleTop: "", titleBottom: "", description: "" }
   }
 };
-const ADMIN_CATEGORY_SCOPES = ["tools", "articles", "content"] as const;
+const ADMIN_CATEGORY_SCOPES = ["tools", "articles", "push", "content"] as const;
 const DEFAULT_ADMIN_CATEGORY_SETTINGS: AdminCategorySettings = {
   tools: [],
   articles: [],
+  push: [],
   content: []
 };
 const initializedDatabases = new WeakSet<D1Database>();
@@ -466,8 +519,9 @@ const initializedTelegramMessageDatabases = new WeakSet<D1Database>();
 const telegramMessageInitializationPromises = new WeakMap<D1Database, Promise<void>>();
 const DATABASE_SCHEMA_VERSION_KEY = "database_schema_version";
 // Increment this whenever SCHEMA_STATEMENTS or compatibility column upgrades change.
-const DATABASE_SCHEMA_VERSION = 12;
+const DATABASE_SCHEMA_VERSION = 16;
 const TELEGRAM_MESSAGE_COLUMNS = `id, resource_type, resource_id, custom_title,
+  resource_data, category,
   chat_id, target_ref, message_id, message_markdown, media_enabled, media_url,
   last_pushed_hash, sent_at, updated_at`;
 const TELEGRAM_MESSAGE_MIGRATION_TABLE = "telegram_messages_migrate";
@@ -475,9 +529,11 @@ const TELEGRAM_MESSAGE_MIGRATION_TABLE = "telegram_messages_migrate";
 function createTelegramMessageTableStatement(table: string) {
   return `CREATE TABLE IF NOT EXISTS ${table} (
   id TEXT PRIMARY KEY,
-  resource_type TEXT NOT NULL CHECK (resource_type IN ('tool', 'article', 'custom')),
+  resource_type TEXT NOT NULL CHECK (resource_type IN ('tool', 'article', 'content', 'custom')),
   resource_id TEXT NOT NULL,
   custom_title TEXT NOT NULL DEFAULT '',
+  resource_data TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT '',
   chat_id TEXT NOT NULL,
   target_ref TEXT NOT NULL DEFAULT '',
   message_id TEXT NOT NULL,
@@ -495,6 +551,16 @@ const TELEGRAM_MESSAGE_TABLE_STATEMENT =
   createTelegramMessageTableStatement("telegram_messages");
 const TELEGRAM_MESSAGE_INDEX_STATEMENT = `CREATE INDEX IF NOT EXISTS idx_telegram_messages_resource
   ON telegram_messages (resource_type, resource_id, updated_at DESC)`;
+const TELEGRAM_PUSH_LOCK_TABLE_STATEMENT = `CREATE TABLE IF NOT EXISTS telegram_push_locks (
+  resource_type TEXT NOT NULL CHECK (resource_type IN ('tool', 'article', 'content', 'custom')),
+  resource_id TEXT NOT NULL,
+  operation TEXT NOT NULL CHECK (operation IN ('save', 'send', 'update', 'recover', 'delete')),
+  lock_token TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('active', 'uncertain')),
+  expires_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (resource_type, resource_id)
+)`;
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS tools (
     id TEXT PRIMARY KEY,
@@ -521,6 +587,7 @@ const SCHEMA_STATEMENTS = [
   "DROP INDEX IF EXISTS idx_tools_featured",
   TELEGRAM_MESSAGE_TABLE_STATEMENT,
   TELEGRAM_MESSAGE_INDEX_STATEMENT,
+  TELEGRAM_PUSH_LOCK_TABLE_STATEMENT,
   `CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -780,12 +847,25 @@ type ApiErrorCode =
   | "TURNSTILE_UNAVAILABLE"
   | "TELEGRAM_NOT_CONFIGURED"
   | "TELEGRAM_DISABLED"
+  | "TELEGRAM_TARGET_UNAVAILABLE"
   | "TELEGRAM_PERMISSION_DENIED"
   | "TELEGRAM_MESSAGE_NOT_FOUND"
   | "TELEGRAM_MESSAGE_EXISTS"
   | "TELEGRAM_TARGET_CHANGED"
   | "TELEGRAM_MESSAGE_TOO_LONG"
+  | "TELEGRAM_TEST_TIMEOUT"
+  | "TELEGRAM_PUSH_IN_PROGRESS"
+  | "TELEGRAM_PUSH_UNCERTAIN"
   | "TELEGRAM_UNAVAILABLE"
+  | "GITHUB_METADATA_TIMEOUT"
+  | "IMAGE_BED_NOT_CONFIGURED"
+  | "IMAGE_BED_DISABLED"
+  | "IMAGE_BED_URL_INVALID"
+  | "IMAGE_FILE_INVALID"
+  | "IMAGE_FILE_TOO_LARGE"
+  | "IMAGE_UPLOAD_TIMEOUT"
+  | "IMAGE_UPLOAD_FAILED"
+  | "IMAGE_UPLOAD_RESPONSE_INVALID"
   | "BACKUP_DATA_INVALID";
 
 type ApiErrorPayload = {
@@ -1060,6 +1140,11 @@ export class UpstreamServiceError extends Error {
     super(message);
     this.name = "UpstreamServiceError";
   }
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
 export function writeErrorResponse(
@@ -1436,7 +1521,7 @@ export function validateToolPayload(payload: ToolPayload) {
   const tags = Array.isArray(payload.tags)
     ? payload.tags
         .filter((tag): tag is string => typeof tag === "string")
-        .map((tag) => tag.trim())
+        .map((tag) => tag.trim().replace(/^#+/, ""))
         .filter(Boolean)
         .slice(0, 8)
     : [];
@@ -1528,7 +1613,7 @@ export function validateArticlePayload(payload: ArticlePayload) {
       : [];
   const tags = tagValues
     .filter((tag): tag is string => typeof tag === "string")
-    .map((tag) => tag.trim())
+    .map((tag) => tag.trim().replace(/^#+/, ""))
     .filter(Boolean)
     .slice(0, 24);
   const published = payload.published !== false;
@@ -1568,7 +1653,7 @@ export function validateContentSourcePayload(
 ) {
   const { requireCategory = true } = options;
   const rawUrl = readRequiredString(payload.url, "url");
-  const url = normalizeHttpUrl(rawUrl);
+  const url = normalizeRssHubRouteUrl(rawUrl) || normalizeHttpUrl(rawUrl);
 
   if (!url) {
     throw new InvalidRequestError("url must be a valid URL.");
@@ -1599,7 +1684,7 @@ export function validateContentSourcePayload(
       : [];
   const tags = tagValues
     .filter((tag): tag is string => typeof tag === "string")
-    .map((tag) => tag.trim())
+    .map((tag) => tag.trim().replace(/^#+/, ""))
     .filter(Boolean)
     .slice(0, 24);
   const enabled = payload.enabled !== false;
@@ -1723,12 +1808,16 @@ async function initializeTelegramMessageSchema(db: D1Database) {
     db.prepare(TELEGRAM_MESSAGE_INDEX_STATEMENT)
   ]);
   await upgradeTelegramMessageTable(db);
+  await ensureTelegramMessageColumns(db);
 
   const legacyTable = await db.prepare(
     `SELECT name FROM sqlite_master
      WHERE type = 'table' AND name = 'telegram_tool_messages'`
   ).first<{ name: string }>();
-  if (!legacyTable) return;
+  if (!legacyTable) {
+    await backfillTelegramMessageResources(db);
+    return;
+  }
 
   const legacyColumns = await db
     .prepare("PRAGMA table_info(telegram_tool_messages)")
@@ -1739,6 +1828,8 @@ async function initializeTelegramMessageSchema(db: D1Database) {
   }
 
   const targetRef = columns.has("target_ref") ? "target_ref" : "''";
+  const resourceData = columns.has("resource_data") ? "resource_data" : "''";
+  const category = columns.has("category") ? "category" : "''";
   const mediaEnabled = columns.has("media_enabled")
     ? "media_enabled"
     : columns.has("link_preview_enabled")
@@ -1751,10 +1842,12 @@ async function initializeTelegramMessageSchema(db: D1Database) {
     `INSERT OR IGNORE INTO telegram_messages (
        id, resource_type, resource_id, chat_id, target_ref, message_id,
        message_markdown, media_enabled, media_url, last_pushed_hash,
+       resource_data, category,
        sent_at, updated_at
      )
      SELECT id, 'tool', tool_id, chat_id, ${targetRef}, message_id,
             message_markdown, ${mediaEnabled}, ${mediaUrl}, ${pushedHash},
+            ${resourceData}, ${category},
             sent_at, updated_at
      FROM telegram_tool_messages`
   ).run();
@@ -1770,6 +1863,69 @@ async function initializeTelegramMessageSchema(db: D1Database) {
   }
 
   await db.prepare("DROP TABLE telegram_tool_messages").run();
+  await backfillTelegramMessageResources(db);
+}
+
+export async function getRssHubSettings(db: D1Database): Promise<RssHubSettings> {
+  const row = await db.prepare("SELECT value FROM app_settings WHERE key = ?")
+    .bind(RSSHUB_SETTINGS_KEY)
+    .first<{ value: string }>();
+
+  if (!row) return { enabled: true, baseUrl: DEFAULT_RSSHUB_BASE_URL };
+
+  try {
+    const parsed = JSON.parse(row.value) as Partial<RssHubSettings>;
+    return {
+      enabled: parsed.enabled !== false,
+      baseUrl: typeof parsed.baseUrl === "string"
+        ? normalizeRssHubBaseUrl(parsed.baseUrl) || DEFAULT_RSSHUB_BASE_URL
+        : DEFAULT_RSSHUB_BASE_URL
+    };
+  } catch {
+    return { enabled: true, baseUrl: DEFAULT_RSSHUB_BASE_URL };
+  }
+}
+
+export async function saveRssHubSettings(
+  db: D1Database,
+  payload: { enabled?: unknown; baseUrl?: unknown }
+) {
+  const requestedBaseUrl = typeof payload.baseUrl === "string" ? payload.baseUrl : "";
+  const normalizedBaseUrl = normalizeRssHubBaseUrl(requestedBaseUrl);
+
+  if (
+    requestedBaseUrl.trim() &&
+    (!normalizedBaseUrl || !normalizeSafeFeedUrl(normalizedBaseUrl))
+  ) {
+    throw new InvalidRequestError("RSSHub base URL must be a public http/https URL.");
+  }
+
+  const settings = {
+    enabled: payload.enabled !== false,
+    baseUrl: normalizedBaseUrl || DEFAULT_RSSHUB_BASE_URL
+  } satisfies RssHubSettings;
+  await db.prepare(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
+  )
+    .bind(RSSHUB_SETTINGS_KEY, JSON.stringify(settings))
+    .run();
+  return settings;
+}
+
+export async function resolveContentSourceFetchUrl(db: D1Database, sourceUrl: string) {
+  const routeUrl = normalizeRssHubRouteUrl(sourceUrl);
+  if (!routeUrl) return sourceUrl;
+
+  const settings = await getRssHubSettings(db);
+  if (!settings.enabled) {
+    throw new InvalidRequestError("RSSHub service is disabled.");
+  }
+
+  const resolved = resolveRssHubRouteUrl(routeUrl, settings.baseUrl);
+  if (!resolved) throw new InvalidRequestError("RSSHub route URL is invalid.");
+  return resolved;
 }
 
 async function upgradeTelegramMessageTable(db: D1Database) {
@@ -1777,13 +1933,15 @@ async function upgradeTelegramMessageTable(db: D1Database) {
     `SELECT sql FROM sqlite_master
      WHERE type = 'table' AND name = 'telegram_messages'`
   ).first<{ sql: string | null }>();
-  if (!table?.sql || table.sql.includes("'custom'")) return;
+  if (!table?.sql || table.sql.includes("'content'")) return;
 
   const existingColumns = await db
     .prepare("PRAGMA table_info(telegram_messages)")
     .all<{ name: string }>();
   const columns = new Set(existingColumns.results.map((column) => column.name));
   const customTitle = columns.has("custom_title") ? "custom_title" : "''";
+  const resourceData = columns.has("resource_data") ? "resource_data" : "''";
+  const category = columns.has("category") ? "category" : "''";
 
   await db.batch([
     db.prepare(`DROP TABLE IF EXISTS ${TELEGRAM_MESSAGE_MIGRATION_TABLE}`),
@@ -1791,6 +1949,7 @@ async function upgradeTelegramMessageTable(db: D1Database) {
     db.prepare(
       `INSERT INTO ${TELEGRAM_MESSAGE_MIGRATION_TABLE} (${TELEGRAM_MESSAGE_COLUMNS})
        SELECT id, resource_type, resource_id, ${customTitle},
+              ${resourceData}, ${category},
               chat_id, target_ref, message_id, message_markdown, media_enabled,
               media_url, last_pushed_hash, sent_at, updated_at
        FROM telegram_messages`
@@ -1800,6 +1959,78 @@ async function upgradeTelegramMessageTable(db: D1Database) {
       `ALTER TABLE ${TELEGRAM_MESSAGE_MIGRATION_TABLE} RENAME TO telegram_messages`
     ),
     db.prepare(TELEGRAM_MESSAGE_INDEX_STATEMENT)
+  ]);
+}
+
+async function ensureTelegramMessageColumns(db: D1Database) {
+  const table = await db.prepare(
+    `SELECT sql FROM sqlite_master
+     WHERE type = 'table' AND name = 'telegram_messages'`
+  ).first<{ sql: string | null }>();
+  if (!table?.sql || (table.sql.includes("resource_data") && table.sql.includes("category"))) {
+    return;
+  }
+  const existing = await db.prepare("PRAGMA table_info(telegram_messages)").all<{ name: string }>();
+  const names = new Set(existing.results.map((column) => column.name));
+  const statements: D1PreparedStatement[] = [];
+  if (!names.has("resource_data")) {
+    statements.push(db.prepare("ALTER TABLE telegram_messages ADD COLUMN resource_data TEXT NOT NULL DEFAULT ''"));
+  }
+  if (!names.has("category")) {
+    statements.push(db.prepare("ALTER TABLE telegram_messages ADD COLUMN category TEXT NOT NULL DEFAULT ''"));
+  }
+  if (statements.length) await db.batch(statements);
+  await backfillTelegramMessageResources(db);
+}
+
+async function backfillTelegramMessageResources(db: D1Database) {
+  await Promise.all([
+    db.prepare(
+      `UPDATE telegram_messages
+       SET resource_data = COALESCE((
+             SELECT json_object(
+               'type', 'tool', 'id', tools.id, 'title', tools.name,
+               'description', tools.description, 'url', tools.url,
+               'demoUrl', tools.demo_url, 'image', tools.image,
+               'category', '', 'tags',
+               CASE WHEN json_valid(tools.tags) THEN json(tools.tags) ELSE json('[]') END
+             )
+             FROM tools WHERE tools.id = telegram_messages.resource_id
+           ), resource_data)
+       WHERE resource_type = 'tool' AND resource_data = ''`
+    ).run(),
+    db.prepare(
+      `UPDATE telegram_messages
+       SET resource_data = COALESCE((
+             SELECT json_object(
+               'type', 'article', 'id', articles.id, 'title', articles.title,
+               'description', articles.summary,
+               'url', CASE WHEN articles.published = 1 THEN '/articles/' || articles.slug ELSE '' END,
+               'demoUrl', '', 'image', articles.cover_image,
+               'category', '', 'tags',
+               CASE WHEN json_valid(articles.tags) THEN json(articles.tags) ELSE json('[]') END
+             )
+             FROM articles WHERE articles.id = telegram_messages.resource_id
+           ), resource_data)
+       WHERE resource_type = 'article' AND resource_data = ''`
+    ).run(),
+    db.prepare(
+      `UPDATE telegram_messages
+       SET resource_data = COALESCE((
+             SELECT json_object(
+               'type', 'content', 'id', content_items.id,
+               'title', content_items.title,
+               'description', content_items.summary,
+               'url', '',
+               'demoUrl', content_items.url,
+               'image', content_items.cover_image,
+               'category', '', 'tags',
+               CASE WHEN json_valid(content_items.tags) THEN json(content_items.tags) ELSE json('[]') END
+             )
+             FROM content_items WHERE content_items.id = telegram_messages.resource_id
+           ), resource_data)
+       WHERE resource_type = 'content' AND resource_data = ''`
+    ).run()
   ]);
 }
 
@@ -2069,7 +2300,9 @@ export async function syncContentSource(db: D1Database, sourceId: string) {
     throw new InvalidRequestError("Content source category is required.");
   }
 
-  const feed = await fetchFeedPreview(source.url);
+  const feed = await fetchFeedPreview(
+    await resolveContentSourceFetchUrl(db, source.url)
+  );
   const now = new Date().toISOString();
   let imported = 0;
   let updated = 0;
@@ -2235,6 +2468,7 @@ function parseArticleTagString(value: string) {
       .trim()
       .replace(/^[-*]\s*/, "")
       .replace(/^["']|["']$/g, "")
+      .replace(/^#+/, "")
       .trim();
   }
 
@@ -2244,11 +2478,24 @@ function parseArticleTagString(value: string) {
       .replace(/^tags\s*:\s*/i, "")
       .replace(/^\[(.*)\]$/, "$1");
 
-    normalized
-      .split(/[\r\n,，、。;；|｜/／\\]+/)
-      .map(cleanTag)
-      .filter(Boolean)
-      .forEach((tag) => tags.push(tag));
+    for (const segment of normalized.split(/[\r\n,，、。;；|｜/／\\]+/)) {
+      let cursor = 0;
+      let foundHashtag = false;
+      for (const match of segment.matchAll(/#[^\s#,，、。;；|｜/／\\]+/g)) {
+        foundHashtag = true;
+        const index = match.index ?? 0;
+        const plain = cleanTag(segment.slice(cursor, index));
+        if (plain) tags.push(plain);
+        tags.push(cleanTag(match[0]));
+        cursor = index + match[0].length;
+      }
+      const remainder = cleanTag(segment.slice(cursor));
+      if (remainder) tags.push(remainder);
+      if (!foundHashtag && !remainder) {
+        const fallback = cleanTag(segment);
+        if (fallback) tags.push(fallback);
+      }
+    }
   }
 
   if (tagKeyIndex >= 0) {
@@ -3186,6 +3433,71 @@ export async function requireAdmin(request: Request, env: Env) {
   return null;
 }
 
+function normalizeAdminAiModel(value: unknown) {
+  const model = typeof value === "string" ? value.trim() : "";
+  return ADMIN_AI_MODELS.find((option) => option === model) ?? DEFAULT_ADMIN_AI_MODEL;
+}
+
+export async function getAdminAiSettings(env: Env): Promise<AdminAiSettings> {
+  const available = Boolean(env.AI);
+  const db = await getDatabase(env);
+  const row = await db.prepare("SELECT value FROM app_settings WHERE key = ?")
+    .bind(AI_SETTINGS_KEY)
+    .first<{ value: string }>();
+
+  if (!row) {
+    return {
+      available,
+      enabled: false,
+      model: DEFAULT_ADMIN_AI_MODEL
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(row.value) as Partial<AdminAiSettings>;
+    return {
+      available,
+      enabled: available && parsed.enabled === true,
+      model: normalizeAdminAiModel(parsed.model)
+    };
+  } catch {
+    return {
+      available,
+      enabled: false,
+      model: DEFAULT_ADMIN_AI_MODEL
+    };
+  }
+}
+
+export async function saveAdminAiSettings(
+  env: Env,
+  payload: AdminAiSettingsInput
+) {
+  const enabled = payload.enabled === true;
+  const requestedModel = typeof payload.model === "string"
+    ? payload.model.trim()
+    : DEFAULT_ADMIN_AI_MODEL;
+
+  if (!ADMIN_AI_MODELS.includes(requestedModel as AdminAiModel)) {
+    throw new InvalidRequestError("Workers AI model is not supported.");
+  }
+
+  if (enabled && !env.AI) {
+    throw new InvalidRequestError("Workers AI binding is not configured.");
+  }
+
+  const db = await getDatabase(env);
+  await db.prepare(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
+  )
+    .bind(AI_SETTINGS_KEY, JSON.stringify({ enabled, model: requestedModel }))
+    .run();
+
+  return getAdminAiSettings(env);
+}
+
 export async function getGitHubSettings(env: Env): Promise<GitHubSettings> {
   const db = await getDatabase(env);
   const row = await db.prepare("SELECT value FROM app_settings WHERE key = ?")
@@ -3275,6 +3587,7 @@ function normalizeAdminCategorySettings(
   return {
     tools: normalizeAdminCategoryList(value.tools),
     articles: normalizeAdminCategoryList(value.articles),
+    push: normalizeAdminCategoryList(value.push),
     content: normalizeAdminCategoryList(value.content)
   };
 }
@@ -3296,7 +3609,10 @@ function isReservedAdminCategory(category: string) {
     category === "全部" ||
     category === "精选" ||
     normalized === "all" ||
-    normalized === "featured"
+    normalized === "featured" ||
+    normalized === "__telegram_tool__" ||
+    normalized === "__telegram_article__" ||
+    normalized === "__telegram_content__"
   );
 }
 
@@ -3348,7 +3664,7 @@ export function toGitHubSettingsResponse(settings: GitHubSettings) {
 }
 
 export async function createToken(env: Env) {
-  const secret = getSecret(env);
+  const secret = await ensureSessionSecret(env);
   const issuedAt = Date.now().toString();
   const signature = await sign(issuedAt, secret);
   return `${issuedAt}.${signature}`;
@@ -4069,6 +4385,11 @@ function createGitHubOpenGraphImageUrl(url: string) {
 
 const GITHUB_METADATA_FRESH_TTL_MS = 60 * 60 * 1000;
 const GITHUB_METADATA_CACHE_TTL_SECONDS = 24 * 60 * 60;
+const GITHUB_METADATA_REQUEST_TIMEOUT_MS = 10_000;
+const GITHUB_METADATA_TIMEOUT_ERROR = "GitHub metadata request timed out.";
+const GITHUB_README_FRESH_TTL_MS = 60 * 60 * 1000;
+const GITHUB_README_CACHE_TTL_SECONDS = 60 * 60;
+const GITHUB_README_MAX_LENGTH = 16_000;
 
 export async function loadGitHubToolMetadata(
   url: string,
@@ -4116,7 +4437,18 @@ export async function loadGitHubToolMetadata(
     headers.set("If-None-Match", cachedEntry.etag);
   }
 
-  const response = await fetch(apiUrl, { headers });
+  let response: Response;
+  try {
+    response = await fetch(apiUrl, {
+      headers,
+      signal: AbortSignal.timeout(GITHUB_METADATA_REQUEST_TIMEOUT_MS)
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new UpstreamServiceError(GITHUB_METADATA_TIMEOUT_ERROR);
+    }
+    throw new UpstreamServiceError("GitHub API request failed.");
+  }
 
   if (response.status === 304 && cachedEntry) {
     const refreshedEntry = {
@@ -4141,7 +4473,15 @@ export async function loadGitHubToolMetadata(
     );
   }
 
-  const repoData = (await response.json()) as GitHubRepoResponse;
+  let repoData: GitHubRepoResponse;
+  try {
+    repoData = (await response.json()) as GitHubRepoResponse;
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new UpstreamServiceError(GITHUB_METADATA_TIMEOUT_ERROR);
+    }
+    throw new UpstreamServiceError("GitHub API response was invalid.");
+  }
   const fullName = readOptionalString(repoData.full_name) || repoPath;
   const repoName = readOptionalString(repoData.name) || repo;
   const repoOwner = readOptionalString(repoData.owner?.login) || owner;
@@ -4180,6 +4520,99 @@ export async function loadGitHubToolMetadata(
   });
 
   return metadata;
+}
+
+export async function loadGitHubAiContext(
+  url: string,
+  options: {
+    token?: string;
+    cacheBaseUrl?: string;
+  } = {}
+): Promise<GitHubAiContext | null> {
+  const repoPath = getGitHubRepoPath(url);
+  if (!repoPath) return null;
+
+  const [owner, repo] = repoPath.split("/");
+  const [metadata, readme] = await Promise.all([
+    loadGitHubToolMetadata(url, options),
+    loadGitHubReadme(owner, repo, options).catch(() => "")
+  ]);
+
+  return {
+    fullName: metadata.fullName,
+    description: metadata.description,
+    topics: metadata.topics,
+    language: metadata.language,
+    license: metadata.license,
+    stars: metadata.stars,
+    forks: metadata.forks,
+    readme
+  };
+}
+
+async function loadGitHubReadme(
+  owner: string,
+  repo: string,
+  options: {
+    token?: string;
+    cacheBaseUrl?: string;
+  }
+) {
+  const normalizedOwner = owner.toLowerCase();
+  const normalizedRepo = repo.toLowerCase();
+  const apiUrl = `https://api.github.com/repos/${encodeURIComponent(normalizedOwner)}/${encodeURIComponent(normalizedRepo)}/readme`;
+  const cacheUrl = new URL(options.cacheBaseUrl || apiUrl);
+  cacheUrl.pathname = `/__htools-cache/github-readme/${encodeURIComponent(normalizedOwner)}/${encodeURIComponent(normalizedRepo)}`;
+  cacheUrl.search = "";
+  cacheUrl.hash = "";
+  const cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
+  const cachedEntry = await readGitHubReadmeCache(cacheKey);
+
+  if (cachedEntry && Date.now() - cachedEntry.cachedAt < GITHUB_README_FRESH_TTL_MS) {
+    return cachedEntry.readme;
+  }
+
+  const headers = new Headers({
+    Accept: "application/vnd.github.raw+json",
+    "User-Agent": "HTools GitHub AI Context",
+    "X-GitHub-Api-Version": "2022-11-28"
+  });
+  const token = options.token?.trim();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  let response: Response;
+  try {
+    response = await fetch(apiUrl, {
+      headers,
+      signal: AbortSignal.timeout(GITHUB_METADATA_REQUEST_TIMEOUT_MS)
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new UpstreamServiceError(GITHUB_METADATA_TIMEOUT_ERROR);
+    }
+    throw new UpstreamServiceError("GitHub README request failed.");
+  }
+
+  if (response.status === 404) {
+    await writeGitHubReadmeCache(cacheKey, { readme: "", cachedAt: Date.now() });
+    return "";
+  }
+  if (!response.ok) {
+    throw new UpstreamServiceError(`GitHub README request failed with status ${response.status}.`);
+  }
+
+  let readme = "";
+  try {
+    readme = (await response.text()).trim().slice(0, GITHUB_README_MAX_LENGTH);
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new UpstreamServiceError(GITHUB_METADATA_TIMEOUT_ERROR);
+    }
+    throw new UpstreamServiceError("GitHub README response was invalid.");
+  }
+
+  await writeGitHubReadmeCache(cacheKey, { readme, cachedAt: Date.now() });
+  return readme;
 }
 
 function resolveMarkdownLink(value: string, baseUrl: string) {
@@ -4268,6 +4701,47 @@ async function writeGitHubMetadataCache(
     );
   } catch {
     // Metadata fetching should still work when Cache API is unavailable locally.
+  }
+}
+
+async function readGitHubReadmeCache(
+  cacheKey: Request
+): Promise<GitHubReadmeCacheEntry | null> {
+  try {
+    const cache = getDefaultCloudflareCache();
+    if (!cache) return null;
+
+    const response = await cache.match(cacheKey);
+    if (!response) return null;
+
+    const entry = (await response.json()) as Partial<GitHubReadmeCacheEntry>;
+    return typeof entry.readme === "string" && typeof entry.cachedAt === "number"
+      ? entry as GitHubReadmeCacheEntry
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeGitHubReadmeCache(
+  cacheKey: Request,
+  entry: GitHubReadmeCacheEntry
+) {
+  try {
+    const cache = getDefaultCloudflareCache();
+    if (!cache) return;
+
+    await cache.put(
+      cacheKey,
+      new Response(JSON.stringify(entry), {
+        headers: {
+          "Cache-Control": `public, max-age=${GITHUB_README_CACHE_TTL_SECONDS}`,
+          "Content-Type": "application/json; charset=utf-8"
+        }
+      })
+    );
+  } catch {
+    // README loading should still work when Cache API is unavailable locally.
   }
 }
 
@@ -4453,12 +4927,82 @@ function normalizeHttpUrl(value: string) {
   }
 }
 
+// 只剩 verifyPassword 一个调用点:新部署还没写过密码哈希时,用 env 明文让管理员首次登录。
+// 令牌签名已经不再用它,见 ensureSessionSecret。
 function getSecret(env: Env) {
   if (!env.ADMIN_PASSWORD) {
     throw new Error("ADMIN_PASSWORD is not configured.");
   }
 
   return env.ADMIN_PASSWORD;
+}
+
+// 会话签名密钥:**只有签发路径(createToken)允许创建它**,校验路径只读不写 ——
+// 没有密钥就不可能存在合法令牌,所以整个站的生命周期里"写密钥"只发生一次。
+async function ensureSessionSecret(env: Env) {
+  const db = await getDatabase(env);
+  const existing = await readSessionSecret(db);
+  if (existing) {
+    return existing;
+  }
+
+  const generated = bytesToBase64Url(
+    crypto.getRandomValues(new Uint8Array(SESSION_SECRET_BYTES))
+  );
+
+  // 必须是 DO NOTHING,不能用 INSERT OR REPLACE:两个冷启动实例同时生成时,覆盖写会让
+  // 先拿到令牌的管理员瞬间失效。让先写入的那枚获胜、其他实例读回同一枚,两张令牌都有效。
+  await db.prepare(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(key) DO NOTHING`
+  )
+    .bind(SESSION_SECRET_KEY, generated)
+    .run();
+
+  const stored = await readSessionSecret(db);
+  if (!stored) {
+    // fail-closed:读不回来就拒绝签发,绝不"临时生成一枚先用"——
+    // 多实例各持一枚会表现成随机掉登录,把配置故障伪装成偶发问题。
+    throw new Error("Session secret is not available.");
+  }
+
+  return stored;
+}
+
+async function readSessionSecret(db: D1Database) {
+  const row = await db.prepare("SELECT value FROM app_settings WHERE key = ?")
+    .bind(SESSION_SECRET_KEY)
+    .first<{ value: string }>();
+
+  return normalizeSessionSecret(row?.value);
+}
+
+function normalizeSessionSecret(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+// 鉴权时用这一条查询同时取回会话密钥和改密时间:D1 往返次数和改造前完全一样。
+async function getAuthSettings(env: Env) {
+  const db = await getDatabase(env);
+  const result = await db.prepare(
+    "SELECT key, value FROM app_settings WHERE key IN (?, ?)"
+  )
+    .bind(SESSION_SECRET_KEY, ADMIN_PASSWORD_KEY)
+    .all<{ key: string; value: string }>();
+
+  let sessionSecret: string | null = null;
+  let passwordSettings: AdminPasswordSettings | null = null;
+
+  for (const row of result.results ?? []) {
+    if (row.key === SESSION_SECRET_KEY) {
+      sessionSecret = normalizeSessionSecret(row.value);
+    } else if (row.key === ADMIN_PASSWORD_KEY) {
+      passwordSettings = parseAdminPasswordSettings(row.value);
+    }
+  }
+
+  return { sessionSecret, passwordSettings };
 }
 
 async function getAdminPasswordSettings(env: Env) {
@@ -4471,8 +5015,14 @@ async function getAdminPasswordSettings(env: Env) {
     return null;
   }
 
+  return parseAdminPasswordSettings(row.value);
+}
+
+// 单独抽出来是因为 getAuthSettings 那条合并查询也要解析同一份 JSON,
+// 两处必须用同一套校验规则,不许各写一份。
+function parseAdminPasswordSettings(value: string) {
   try {
-    const parsed = JSON.parse(row.value) as Partial<AdminPasswordSettings>;
+    const parsed = JSON.parse(value) as Partial<AdminPasswordSettings>;
 
     if (
       parsed.algorithm !== "PBKDF2-SHA256" ||
@@ -4570,7 +5120,6 @@ function base64UrlToBytes(value: string) {
 }
 
 async function verifyToken(token: string, env: Env) {
-  const secret = getSecret(env);
   const [issuedAt, signature] = token.split(".");
   const timestamp = Number(issuedAt);
 
@@ -4582,12 +5131,18 @@ async function verifyToken(token: string, env: Env) {
     return false;
   }
 
-  const expected = await sign(issuedAt, secret);
+  const { sessionSecret, passwordSettings } = await getAuthSettings(env);
+
+  // 校验路径只读不建:没有密钥就不可能存在合法令牌,直接拒绝(fail-closed)。
+  if (!sessionSecret) {
+    return false;
+  }
+
+  const expected = await sign(issuedAt, sessionSecret);
   if (!timingSafeEqual(signature, expected)) {
     return false;
   }
 
-  const passwordSettings = await getAdminPasswordSettings(env);
   if (!passwordSettings) {
     return true;
   }

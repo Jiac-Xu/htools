@@ -1,6 +1,5 @@
 import {
   getDatabase,
-  ensureTelegramMessageSchema,
   invalidatePublicApiCache,
   badRequest,
   json,
@@ -25,6 +24,7 @@ type BackupCounts = {
   articles: number;
   contentSources: number;
   contentItems: number;
+  telegramMessages: number;
   settings: number;
 };
 
@@ -41,15 +41,19 @@ const BACKUP_SOURCE = "htools-backup";
 const BACKUP_VERSION = "4";
 const MAX_BACKUP_BODY_BYTES = 10 * 1024 * 1024;
 const SAFE_SETTING_KEYS = [
+  "ai_settings",
   "umami_settings",
   "source_public_enabled",
   "github_settings",
+  "image_bed_settings",
   "admin_turnstile_enabled",
   "proxy_settings",
+  "rsshub_settings",
   "site_settings",
   "admin_category_settings",
   "telegram_settings"
 ] as const;
+const SAFE_SETTING_PLACEHOLDERS = SAFE_SETTING_KEYS.map(() => "?").join(", ");
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const unauthorized = await requireAdmin(request, env);
@@ -60,6 +64,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   try {
     const db = await getDatabase(env);
     const data = await readBackupData(db);
+    validateBackupIntegrity(data);
     const counts = createBackupCounts(data);
 
     return json({
@@ -171,7 +176,6 @@ async function readLimitedJsonBody(request: Request): Promise<unknown> {
 }
 
 async function readBackupData(db: D1Database): Promise<BackupData> {
-  await ensureTelegramMessageSchema(db);
   const [tools, articles, contentSources, contentItems, telegramMessages, settings] =
     await Promise.all([
       db
@@ -202,7 +206,8 @@ async function readBackupData(db: D1Database): Promise<BackupData> {
         .all<ContentItemRow>(),
       db
         .prepare(
-          `SELECT id, resource_type, resource_id, custom_title, chat_id, target_ref,
+          `SELECT id, resource_type, resource_id, custom_title, resource_data, category,
+                  chat_id, target_ref,
                   message_id, message_markdown,
                    media_enabled, media_url, last_pushed_hash, sent_at, updated_at
            FROM telegram_messages
@@ -213,7 +218,7 @@ async function readBackupData(db: D1Database): Promise<BackupData> {
         .prepare(
           `SELECT key, value, updated_at
            FROM app_settings
-           WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?)
+           WHERE key IN (${SAFE_SETTING_PLACEHOLDERS})
            ORDER BY key`
         )
         .bind(...SAFE_SETTING_KEYS)
@@ -231,8 +236,8 @@ async function readBackupData(db: D1Database): Promise<BackupData> {
 }
 
 async function restoreBackupData(db: D1Database, data: BackupData) {
-  await ensureTelegramMessageSchema(db);
   const statements: D1PreparedStatement[] = [
+    db.prepare("DELETE FROM telegram_push_locks"),
     db.prepare("DELETE FROM telegram_messages"),
     db.prepare("DELETE FROM content_items"),
     db.prepare("DELETE FROM content_sources"),
@@ -270,17 +275,19 @@ async function restoreBackupData(db: D1Database, data: BackupData) {
       db
         .prepare(
           `INSERT INTO telegram_messages (
-             id, resource_type, resource_id, custom_title, chat_id, target_ref,
+             id, resource_type, resource_id, custom_title, resource_data, category, chat_id, target_ref,
              message_id, message_markdown,
              media_enabled, media_url, last_pushed_hash, sent_at, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           row.id,
           row.resource_type,
           row.resource_id,
           row.custom_title,
+          row.resource_data ?? "",
+          row.category ?? "",
           row.chat_id,
           row.target_ref,
           row.message_id,
@@ -665,14 +672,14 @@ function normalizeTelegramMessageRow(
   const row = readRecord(value, `telegramMessages[${index}]`);
   const messageId = readString(row.message_id);
   const chatId = readString(row.chat_id);
-  const legacyToolId = readString(row.tool_id);
-  const resourceType = readString(row.resource_type) || (legacyToolId ? "tool" : "");
-  const resourceId = readString(row.resource_id) || legacyToolId;
+  const resourceType = readString(row.resource_type);
+  const resourceId = readString(row.resource_id);
   const sentAt = readString(row.sent_at) || (messageId ? now : "");
 
   if (
     resourceType !== "tool" &&
     resourceType !== "article" &&
+    resourceType !== "content" &&
     resourceType !== "custom"
   ) {
     throw new Error(`telegramMessages[${index}].resource_type is invalid.`);
@@ -689,14 +696,13 @@ function normalizeTelegramMessageRow(
     resource_type: resourceType,
     resource_id: resourceId,
     custom_title: readString(row.custom_title),
+    resource_data: readString(row.resource_data),
+    category: readString(row.category),
     chat_id: chatId,
     target_ref: readString(row.target_ref),
     message_id: messageId,
     message_markdown: readString(row.message_markdown),
-    media_enabled: readIntegerFlag(
-      row.media_enabled,
-      readIntegerFlag(row.link_preview_enabled, 0)
-    ),
+    media_enabled: readIntegerFlag(row.media_enabled),
     media_url: readString(row.media_url),
     last_pushed_hash: readString(row.last_pushed_hash),
     sent_at: sentAt,
@@ -729,6 +735,7 @@ function createBackupCounts(data: BackupData): BackupCounts {
     articles: data.articles.length,
     contentSources: data.contentSources.length,
     contentItems: data.contentItems.length,
+    telegramMessages: data.telegramMessages.length,
     settings: data.settings.length
   };
 }

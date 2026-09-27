@@ -1,6 +1,6 @@
 # HTools
 
-HTools is an open-source tool directory built on Cloudflare Pages Functions and D1, with a public tool library, articles, and an RSS content dashboard.
+HTools is an open-source tool directory platform powered by Cloudflare Pages Functions and D1, combining tool curation, article management, RSS aggregation, and Telegram message delivery—without a traditional server.
 
 <p align="center">
   <a href="https://pages.cloudflare.com/"><img src="https://img.shields.io/badge/Cloudflare-F38020?logo=cloudflare&amp;logoColor=white&amp;labelColor=555" alt="Cloudflare" /></a>
@@ -26,11 +26,13 @@ HTools is an open-source tool directory built on Cloudflare Pages Functions and 
 
 ## Features
 
-- The public site includes tool categories, articles, tool submission, and an about page.
-- The dashboard manages tools, articles, RSS sources, categories, and system settings.
-- RSS items can be previewed or converted into site articles; articles and the about page support Markdown.
-- Users can fetch GitHub repository metadata and continue to GitHub to create a public issue; admins can also auto-fill repository details.
-- Full backup and restore, a public tool feed, and Simplified Chinese / English interfaces are included.
+- **Tool directory**: category browsing, site-wide search, featured picks, and public tool submissions.
+- **Content management**: articles and RSS subscription content in one dashboard, with Markdown support and conversion into site articles.
+- **Telegram push**: send tools, articles, subscription items, and custom messages, then browse and update the records in one place.
+- **GitHub integration**: read public repository details and auto-fill project metadata.
+- **Workers AI** (optional): generate descriptions, summaries, and tags; convert common documents to Markdown.
+- **ImgBed** (optional): upload images from the dashboard and fill in their public URLs automatically.
+- **Data & experience**: full backup and restore, a public tool feed, Simplified Chinese / English interfaces, and light / dark themes.
 
 ## Deployment
 
@@ -44,44 +46,34 @@ Build output directory: dist
 ```
 
 4. Create a Cloudflare D1 database, for example `htools`.
-5. Go back to the Pages project settings and add a D1 binding for Functions:
-
-```txt
-Variable name: DB
-D1 database: select the database you just created
-```
-
+5. Go back to the Pages project settings and add the `DB` binding listed under "Resource Bindings" below; add the `AI` binding as well if you want Workers AI.
 6. Add the required variables to the Pages deployment environment using the environment-variable table below, and store every value marked as Secret as an encrypted variable.
-
 7. Redeploy the Pages project.
 8. Open `/admin` and sign in.
 
 The D1 schema is initialized or upgraded automatically on first API access; no manual migration command is required. The database starts empty, so import the default source from the dashboard or add tools manually.
 
+## Resource Bindings
+
+Add these under **Settings → Bindings** in the Pages project. Bindings are not environment variables, so they take no value:
+
+| Variable name | Required | Type | Description |
+| --- | --- | --- | --- |
+| `DB` | Yes | D1 database | Select the D1 database you created; stores tools, articles, subscription content, and settings. |
+| `AI` | No | Workers AI | Once bound, select a model and enable AI generation and document conversion under Admin > Service Settings. |
+
 ## Environment Variables
 
 The application reads the following environment variables:
 
-| Variable | Required | Recommended type | Purpose |
+| Variable | Required | Recommended type | Description |
 | --- | --- | --- | --- |
 | `ADMIN_PASSWORD` | Yes | Secret | Admin password and session-signing secret; use a unique password of at least 12 characters. |
-| `GITHUB_TOKEN` | No | Secret | Reads public GitHub repository metadata while adding or editing tools and raises the GitHub API request limit. |
-| `TURNSTILE_SITE_KEY` | No; configure together with the secret key | Plain variable | Cloudflare Turnstile Site Key used to load the widget on the administrator login page. |
-| `TURNSTILE_SECRET_KEY` | No; configure together with the site key | Secret | Cloudflare Turnstile Secret Key used by the server to verify challenge results. |
-| `TGTOKEN` | No; configure together with `TGID` | Secret | Telegram Bot Token used for administrator-triggered tool or article pushes. |
-| `TGID` | No; configure together with `TGTOKEN` | Plain variable | Telegram recipient; accepts a user, private group, supergroup, or channel numeric ID, or a public channel username. |
-
-Use a read-only `GITHUB_TOKEN` without repository write, delete, or administration permissions. Without it, the admin browser requests GitHub's public API directly. The public submission page always uses the visitor's browser and never uses the site token.
-
-To use Turnstile, add the deployed domain in Cloudflare, configure both keys, redeploy, and enable it under Admin → Service Settings.
-
-To use Telegram pushing, add the bot to the target chat with permission to send messages, configure `TGTOKEN` and `TGID`, redeploy, then test and enable it under Admin → Service Settings. The fixed Markdown footer is configured there. Every push is triggered manually by an administrator; creating, editing, importing, or synchronizing content never sends automatically.
-
-There are two entry points: click the Telegram icon on a tool or article card and choose “Push now” or “Save draft”, or open Admin → Message Push and click “Add Push” to write a standalone message that is not tied to any tool or article. Bodies are written in Markdown and converted to the HTML subset Telegram supports — bold, italic, strikethrough, quotes, code, and links. **Markdown headings render as bold text, tables are not supported**, and a complete message is limited to 4096 characters.
-
-A tool preview or article cover is prefilled, but image sending starts disabled; articles without a cover do not generate a substitute screenshot. “Save” stores the current content only, while “Push” or “Update” creates or edits the Telegram message. If the original message was deleted, keep the body and image while rebuilding the push; if permissions are denied, update the bot permissions and retry.
-
-Admin → Message Push manages every record, including drafts that have not been sent, with search, type filters, preview, editing, pushing, and deletion. Loading the page reads D1 only and never contacts Telegram. **Deleting a record removes local data only and never deletes the message already sent to Telegram** — withdraw it in Telegram yourself if needed. After sending you can still edit the content and update the same message, but it cannot go back to draft.
+| `GITHUB_TOKEN` | No | Secret | Raises the limit for admin-side public repository metadata requests. Use a read-only token without write, delete, or administration permissions; without it, the admin browser requests GitHub directly. |
+| `IMGBED_TOKEN` | No | Secret | API token for [CloudFlare ImgBed](https://github.com/MarSeventh/CloudFlare-ImgBed). Grant only the `upload` permission, redeploy, then configure and enable the image bed under Admin > Service Settings. Uploads PNG, JPEG, WebP, GIF, or AVIF files up to 10 MB for tool previews, article covers, and Telegram push images. |
+| `TURNSTILE_SITE_KEY` | No; configure together with the secret key | Plain variable | Turnstile Site Key for the administrator login page; configure it together with the secret key. |
+| `TURNSTILE_SECRET_KEY` | No; configure together with the site key | Secret | Verifies Turnstile results on the server. Add the deployed domain, redeploy, then enable it in the dashboard. |
+| `TGTOKEN` | No | Secret | Telegram Bot Token. After redeploying, set the recipient, test the connection, and enable it in the dashboard. Pushes are always triggered manually by an administrator. |
 
 ## Local Development
 

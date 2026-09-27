@@ -31,7 +31,7 @@ export type Messages = {
     latestTools: string;
     latestArticles: string;
     moreTools: string;
-    morePosts: string;
+    moreArticles: string;
     footerDescription: string;
     footerProduct: string;
     footerSupport: string;
@@ -128,6 +128,7 @@ export type Messages = {
     githubMetadataSuccess: string;
     githubMetadataNotFound: string;
     githubMetadataRateLimited: string;
+    githubMetadataTimeout: string;
     githubMetadataFailed: string;
     submitHint: string;
     validationNameRequired: string;
@@ -172,7 +173,6 @@ export type Messages = {
     toolLibrary: string;
     settings: string;
     rootUser: string;
-    refresh: string;
     collapseSidebar: string;
     expandSidebar: string;
     searchPlaceholder: string;
@@ -187,16 +187,12 @@ export type Messages = {
     passwordRequired: string;
     turnstileRequired: string;
     turnstileServerFailed: string;
-    tableTool: string;
     editTool: string;
     deleteTool: string;
     editAction: string;
     deleteAction: string;
   };
   linkCheck: {
-    eyebrow: string;
-    title: string;
-    description: string;
     timeout: string;
     timeoutHelp: string;
     batchSize: string;
@@ -244,26 +240,31 @@ export type Messages = {
     };
   };
   form: {
+    addDescription: string;
+    editDescription: string;
     name: string;
+    namePlaceholder: string;
     url: string;
+    urlPlaceholder: string;
     demoUrl: string;
     demoUrlPlaceholder: string;
     image: string;
     imagePlaceholder: string;
+    imageUpload: string;
+    imageUploadUnavailable: string;
+    imageUploadSuccess: string;
     category: string;
     description: string;
+    descriptionPlaceholder: string;
     tags: string;
     tagsPlaceholder: string;
     githubMetadata: string;
+    githubMetadataUnavailable: string;
     featuredTool: string;
     regularTool: string;
     saveTool: string;
   };
   githubSettings: {
-    title: string;
-    description: string;
-    enabled: string;
-    disabled: string;
     statusEnabled: string;
     statusDisabled: string;
     owner: string;
@@ -271,7 +272,6 @@ export type Messages = {
     labels: string;
     labelsPlaceholder: string;
     saved: string;
-    saveFailed: string;
   };
   status: {
     loginFailed: string;
